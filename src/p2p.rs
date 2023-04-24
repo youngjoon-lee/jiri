@@ -13,33 +13,37 @@ use libp2p::{
     tcp, yamux, PeerId, Transport,
 };
 
-pub async fn new() -> Result<Client, Box<dyn Error>> {
-    let id_keys = identity::Keypair::generate_ed25519();
-    let peer_id = id_keys.public().to_peer_id();
-    log::info!("Peer {peer_id} generated");
+#[derive(Debug)]
+pub struct Node;
 
-    let transport = tcp::async_io::Transport::default()
-        .upgrade(Version::V1Lazy)
-        .authenticate(noise::NoiseAuthenticated::xx(&id_keys)?)
-        .multiplex(yamux::YamuxConfig::default())
-        .boxed();
+impl Node {
+    pub async fn new() -> Result<Self, Box<dyn Error>> {
+        let id_keys = identity::Keypair::generate_ed25519();
+        let peer_id = id_keys.public().to_peer_id();
+        log::info!("Peer {peer_id} generated");
 
-    let behaviour = Behaviour::new(id_keys, peer_id, "jiri-chat")?;
+        let transport = tcp::async_io::Transport::default()
+            .upgrade(Version::V1Lazy)
+            .authenticate(noise::NoiseAuthenticated::xx(&id_keys)?)
+            .multiplex(yamux::YamuxConfig::default())
+            .boxed();
 
-    let mut swarm = SwarmBuilder::with_async_std_executor(transport, behaviour, peer_id).build();
+        let behaviour = Behaviour::new(id_keys, peer_id, "jiri-chat")?;
 
-    swarm.listen_on("/ip4/0.0.0.0/tcp/0".parse()?)?;
+        let mut swarm =
+            SwarmBuilder::with_async_std_executor(transport, behaviour, peer_id).build();
 
-    loop {
-        match swarm.select_next_some().await {
-            SwarmEvent::NewListenAddr { address, .. } => log::info!("Listening on {address:?}"),
-            _ => {}
+        swarm.listen_on("/ip4/0.0.0.0/tcp/0".parse()?)?;
+
+        loop {
+            match swarm.select_next_some().await {
+                SwarmEvent::NewListenAddr { address, .. } => log::info!("Listening on {address:?}"),
+                SwarmEvent::Behaviour(event) => log::info!("Event received: {event:?}"),
+                _ => {}
+            }
         }
     }
 }
-
-#[derive(Debug)]
-pub struct Client;
 
 #[derive(NetworkBehaviour)]
 struct Behaviour {

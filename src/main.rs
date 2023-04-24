@@ -1,8 +1,8 @@
+mod p2p;
+
 use std::error::Error;
 
-use crate::p2p::new;
-
-mod p2p;
+use crate::p2p::Node;
 
 #[async_std::main]
 async fn main() -> Result<(), Box<dyn Error>> {
@@ -10,8 +10,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     log::info!("Initializing JIRI node...");
 
-    let client = new().await?;
-    log::info!("Client:{client:?}");
+    Node::new().await?;
 
     Ok(())
 }
