@@ -13,8 +13,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     log::info!("Initializing JIRI node...");
 
-    let (node, command_sender) = Node::new()?;
-    let mut api = Api::new(command_sender);
+    let (node, command_sender, message_receiver) = Node::new()?;
+    let mut api = Api::new(command_sender, message_receiver);
 
     select! {
         _ = node.run().fuse() => {

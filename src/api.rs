@@ -8,15 +8,22 @@ use crate::p2p::Command;
 #[derive(Debug)]
 pub struct Api {
     command_sender: mpsc::Sender<Command>,
+    message_receiver: async_channel::Receiver<bytes::Bytes>,
 }
 
 impl Api {
-    pub fn new(command_sender: mpsc::Sender<Command>) -> Self {
-        Api { command_sender }
+    pub fn new(
+        command_sender: mpsc::Sender<Command>,
+        message_receiver: async_channel::Receiver<bytes::Bytes>,
+    ) -> Self {
+        Api {
+            command_sender,
+            message_receiver,
+        }
     }
 
     pub async fn run(&mut self) -> Result<(), Box<dyn Error>> {
-        let routes = filters::all(self.command_sender.clone());
+        let routes = filters::all(self.command_sender.clone(), self.message_receiver.clone());
         warp::serve(routes).run(([0, 0, 0, 0], 0)).await;
         Ok(())
     }
@@ -36,10 +43,11 @@ mod filters {
 
     pub fn all(
         command_sender: mpsc::Sender<Command>,
+        message_receiver: async_channel::Receiver<bytes::Bytes>,
     ) -> impl Filter<Extract = (impl warp::Reply,), Error = warp::Rejection> + Clone {
         send_message(command_sender.clone())
             .or(status())
-            .or(subscribe_messages())
+            .or(subscribe_messages(message_receiver.clone()))
     }
 
     pub fn send_message(
@@ -54,10 +62,14 @@ mod filters {
     }
 
     pub fn subscribe_messages(
+        message_receiver: async_channel::Receiver<bytes::Bytes>,
     ) -> impl Filter<Extract = (impl warp::Reply,), Error = warp::Rejection> + Clone {
-        warp::path!("msg").and(warp::ws()).map(|ws: warp::ws::Ws| {
-            ws.on_upgrade(move |socket| handlers::subscribe_messages(socket))
-        })
+        warp::path!("msg")
+            .and(warp::ws())
+            .and(warp::any().map(move || message_receiver.clone()))
+            .map(|ws: warp::ws::Ws, message_receiver| {
+                ws.on_upgrade(move |socket| handlers::subscribe_messages(socket, message_receiver))
+            })
     }
 
     pub fn status() -> impl Filter<Extract = (impl warp::Reply,), Error = warp::Rejection> + Clone {
@@ -68,7 +80,7 @@ mod filters {
 }
 
 mod handlers {
-    use std::{convert::Infallible, time::Duration};
+    use std::convert::Infallible;
 
     use futures::{channel::mpsc, SinkExt, StreamExt};
     use warp::{
@@ -92,11 +104,17 @@ mod handlers {
         Ok(StatusCode::OK)
     }
 
-    pub async fn subscribe_messages(ws: WebSocket) {
+    pub async fn subscribe_messages(
+        ws: WebSocket,
+        message_receiver: async_channel::Receiver<bytes::Bytes>,
+    ) {
         let (mut sender, ..) = ws.split();
-        loop {
-            tokio::time::sleep(Duration::from_secs(3)).await;
-            if let Err(e) = sender.send(Message::text("yo man")).await {
+
+        while let Ok(msg) = message_receiver.recv().await {
+            if let Err(e) = sender
+                .send(Message::text(String::from_utf8_lossy(&msg)))
+                .await
+            {
                 log::error!("Failed to send msg to WebSocket: {e:?}");
             }
         }

@@ -18,10 +18,18 @@ pub struct Node {
     swarm: Swarm<Behaviour>,
     topic: gossipsub::IdentTopic,
     command_receiver: mpsc::Receiver<Command>,
+    message_sender: async_channel::Sender<bytes::Bytes>,
 }
 
 impl Node {
-    pub fn new() -> Result<(Self, mpsc::Sender<Command>), Box<dyn Error>> {
+    pub fn new() -> Result<
+        (
+            Self,
+            mpsc::Sender<Command>,
+            async_channel::Receiver<bytes::Bytes>,
+        ),
+        Box<dyn Error>,
+    > {
         let id_keys = identity::Keypair::generate_ed25519();
         let peer_id = id_keys.public().to_peer_id();
         log::info!("Peer {peer_id} generated");
@@ -41,14 +49,17 @@ impl Node {
         swarm.listen_on("/ip4/0.0.0.0/tcp/0".parse()?)?;
 
         let (command_sender, command_receiver) = mpsc::channel(0);
+        let (message_sender, message_receiver) = async_channel::unbounded();
 
         Ok((
             Node {
                 swarm,
                 topic,
                 command_receiver,
+                message_sender,
             },
             command_sender,
+            message_receiver,
         ))
     }
 
@@ -85,6 +96,7 @@ impl Node {
                         message
                     })) => {
                         log::info!("Got message: {} with ID:{message_id} from peer:{propagation_source}", String::from_utf8_lossy(&message.data));
+                        self.message_sender.send(bytes::Bytes::copy_from_slice(&message.data)).await?;
                     },
                     SwarmEvent::Behaviour(event) => log::info!("Event received: {event:?}"),
                     _ => {}
