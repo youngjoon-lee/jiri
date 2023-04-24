@@ -6,19 +6,22 @@ use std::{
 };
 
 use async_std::io;
-use futures::{select, AsyncBufReadExt, StreamExt};
+use futures::{channel::mpsc, select, AsyncBufReadExt, StreamExt};
 use libp2p::{
     core::upgrade::Version,
     gossipsub, identity, mdns, noise,
     swarm::{NetworkBehaviour, SwarmBuilder, SwarmEvent},
-    tcp, yamux, PeerId, Transport,
+    tcp, yamux, PeerId, Swarm, Transport,
 };
 
-#[derive(Debug)]
-pub struct Node;
+pub struct Node {
+    swarm: Swarm<Behaviour>,
+    topic: gossipsub::IdentTopic,
+    command_receiver: mpsc::Receiver<Command>,
+}
 
 impl Node {
-    pub async fn new() -> Result<Self, Box<dyn Error>> {
+    pub fn new() -> Result<(Self, mpsc::Sender<Command>), Box<dyn Error>> {
         let id_keys = identity::Keypair::generate_ed25519();
         let peer_id = id_keys.public().to_peer_id();
         log::info!("Peer {peer_id} generated");
@@ -35,29 +38,45 @@ impl Node {
         let mut swarm =
             SwarmBuilder::with_async_std_executor(transport, behaviour, peer_id).build();
 
-        let mut stdin = io::BufReader::new(io::stdin()).lines().fuse();
-
         swarm.listen_on("/ip4/0.0.0.0/tcp/0".parse()?)?;
+
+        let (command_sender, command_receiver) = mpsc::channel(0);
+
+        Ok((
+            Node {
+                swarm,
+                topic,
+                command_receiver,
+            },
+            command_sender,
+        ))
+    }
+
+    pub async fn run(mut self) -> Result<(), Box<dyn Error>> {
+        let mut stdin = io::BufReader::new(io::stdin()).lines().fuse();
 
         loop {
             select! {
                 line = stdin.select_next_some() => {
-                    if let Err(e) = swarm.behaviour_mut().gossipsub.publish(topic.clone(), line?.as_bytes()) {
+                    if let Err(e) = self.swarm.behaviour_mut().gossipsub.publish(self.topic.clone(), line?.as_bytes()) {
                         log::error!("Failed to publish: {e:?}");
                     }
                 },
-                event = swarm.select_next_some() => match event {
+                command = self.command_receiver.select_next_some() => {
+                    self.handle_command(command)
+                },
+                event = self.swarm.select_next_some() => match event {
                     SwarmEvent::NewListenAddr { address, .. } => log::info!("Listening on {address:?}"),
                     SwarmEvent::Behaviour(BehaviourEvent::Mdns(mdns::Event::Discovered(list))) => {
                         for (peer_id, _) in list {
                             log::info!("mDNS discovered a new peer: {peer_id}");
-                            swarm.behaviour_mut().gossipsub.add_explicit_peer(&peer_id);
+                            self.swarm.behaviour_mut().gossipsub.add_explicit_peer(&peer_id);
                         }
                     },
                     SwarmEvent::Behaviour(BehaviourEvent::Mdns(mdns::Event::Expired(list))) => {
                         for (peer_id, _) in list {
                             log::info!("mDNS found an expired peer: {peer_id}");
-                            swarm.behaviour_mut().gossipsub.remove_explicit_peer(&peer_id);
+                            self.swarm.behaviour_mut().gossipsub.remove_explicit_peer(&peer_id);
                         }
                     },
                     SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(gossipsub::Event::Message {
@@ -70,6 +89,21 @@ impl Node {
                     SwarmEvent::Behaviour(event) => log::info!("Event received: {event:?}"),
                     _ => {}
                 },
+            }
+        }
+    }
+
+    fn handle_command(&mut self, command: Command) {
+        match command {
+            Command::SendMessage { msg } => {
+                if let Err(e) = self
+                    .swarm
+                    .behaviour_mut()
+                    .gossipsub
+                    .publish(self.topic.clone(), msg)
+                {
+                    log::error!("Failed to publish: {e:?}");
+                }
             }
         }
     }
@@ -106,4 +140,9 @@ impl Behaviour {
 
         Ok(Self { gossipsub, mdns })
     }
+}
+
+#[derive(Debug)]
+pub enum Command {
+    SendMessage { msg: bytes::Bytes },
 }
