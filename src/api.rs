@@ -3,18 +3,18 @@ use std::error::Error;
 use futures::channel::mpsc;
 use serde_derive::{Deserialize, Serialize};
 
-use crate::p2p::Command;
+use crate::p2p::{Command, Message};
 
 #[derive(Debug)]
 pub struct Api {
     command_sender: mpsc::Sender<Command>,
-    message_receiver: async_channel::Receiver<bytes::Bytes>,
+    message_receiver: async_channel::Receiver<Message>,
 }
 
 impl Api {
     pub fn new(
         command_sender: mpsc::Sender<Command>,
-        message_receiver: async_channel::Receiver<bytes::Bytes>,
+        message_receiver: async_channel::Receiver<Message>,
     ) -> Self {
         Api {
             command_sender,
@@ -35,7 +35,7 @@ struct Status {
 }
 
 mod filters {
-    use crate::p2p::Command;
+    use crate::p2p::{Command, Message};
 
     use super::handlers;
     use futures::channel::mpsc;
@@ -43,7 +43,7 @@ mod filters {
 
     pub fn all(
         command_sender: mpsc::Sender<Command>,
-        message_receiver: async_channel::Receiver<bytes::Bytes>,
+        message_receiver: async_channel::Receiver<Message>,
     ) -> impl Filter<Extract = (impl warp::Reply,), Error = warp::Rejection> + Clone {
         send_message(command_sender.clone())
             .or(status())
@@ -62,7 +62,7 @@ mod filters {
     }
 
     pub fn subscribe_messages(
-        message_receiver: async_channel::Receiver<bytes::Bytes>,
+        message_receiver: async_channel::Receiver<Message>,
     ) -> impl Filter<Extract = (impl warp::Reply,), Error = warp::Rejection> + Clone {
         warp::path!("msg")
             .and(warp::ws())
@@ -83,21 +83,19 @@ mod handlers {
     use std::convert::Infallible;
 
     use futures::{channel::mpsc, SinkExt, StreamExt};
-    use warp::{
-        hyper::StatusCode,
-        ws::{Message, WebSocket},
-    };
+    use warp::{hyper::StatusCode, ws};
 
-    use crate::p2p::Command;
+    use crate::p2p::{Command, Message};
 
     use super::Status;
 
     pub async fn send_message(
-        msg: bytes::Bytes,
+        text: bytes::Bytes,
         mut command_sender: mpsc::Sender<Command>,
     ) -> Result<impl warp::Reply, Infallible> {
-        log::info!("Got message via API: {}", String::from_utf8_lossy(&msg));
-        if let Err(e) = command_sender.send(Command::SendMessage { msg }).await {
+        let msg = Message::Text(String::from_utf8_lossy(&text).to_string());
+        log::info!("Got message via API: {:?}", msg);
+        if let Err(e) = command_sender.send(Command::SendMessage(msg)).await {
             log::error!("Failed to send msg to channel: {e:?}");
             return Ok(StatusCode::INTERNAL_SERVER_ERROR);
         }
@@ -105,17 +103,21 @@ mod handlers {
     }
 
     pub async fn subscribe_messages(
-        ws: WebSocket,
-        message_receiver: async_channel::Receiver<bytes::Bytes>,
+        ws: ws::WebSocket,
+        message_receiver: async_channel::Receiver<Message>,
     ) {
         let (mut sender, ..) = ws.split();
 
         while let Ok(msg) = message_receiver.recv().await {
-            if let Err(e) = sender
-                .send(Message::text(String::from_utf8_lossy(&msg)))
-                .await
-            {
-                log::error!("Failed to send msg to WebSocket: {e:?}");
+            match msg {
+                Message::Text(text) => {
+                    if let Err(e) = sender.send(ws::Message::text(text)).await {
+                        log::error!("Failed to send msg to WebSocket: {e:?}");
+                    }
+                }
+                _ => {
+                    log::error!("Not implemented yet for {:?}", msg);
+                }
             }
         }
     }

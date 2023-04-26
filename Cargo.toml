@@ -16,7 +16,8 @@ futures = "0.3.28"
 libp2p = { version = "0.51.3", features = ["async-std", "dns", "mdns", "kad", "noise", "macros", "request-response", "tcp", "websocket", "yamux", "gossipsub"] }
 log = "0.4.17"
 multiaddr = { version = "0.17.1" }
-serde = "1.0.160"
+serde = { version = "1.0.160", features = ["derive"] }
 serde_derive = "1.0.160"
+serde_json = "1.0.96"
 tokio = { version = "1.27.0", features = ["full"] }
 warp = "0.3.4"

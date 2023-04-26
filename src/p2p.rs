@@ -13,12 +13,13 @@ use libp2p::{
     swarm::{NetworkBehaviour, SwarmBuilder, SwarmEvent},
     tcp, yamux, PeerId, Swarm, Transport,
 };
+use serde::{Deserialize, Serialize};
 
 pub struct Node {
     swarm: Swarm<Behaviour>,
     topic: gossipsub::IdentTopic,
     command_receiver: mpsc::Receiver<Command>,
-    message_sender: async_channel::Sender<bytes::Bytes>,
+    message_sender: async_channel::Sender<Message>,
 }
 
 impl Node {
@@ -26,7 +27,7 @@ impl Node {
         (
             Self,
             mpsc::Sender<Command>,
-            async_channel::Receiver<bytes::Bytes>,
+            async_channel::Receiver<Message>,
         ),
         Box<dyn Error>,
     > {
@@ -69,12 +70,13 @@ impl Node {
         loop {
             select! {
                 line = stdin.select_next_some() => {
-                    if let Err(e) = self.swarm.behaviour_mut().gossipsub.publish(self.topic.clone(), line?.as_bytes()) {
+                    let msg = serde_json::to_vec(&Message::Text(line?))?;
+                    if let Err(e) = self.swarm.behaviour_mut().gossipsub.publish(self.topic.clone(), msg) {
                         log::error!("Failed to publish: {e:?}");
                     }
                 },
                 command = self.command_receiver.select_next_some() => {
-                    self.handle_command(command)
+                    self.handle_command(command)?
                 },
                 event = self.swarm.select_next_some() => match event {
                     SwarmEvent::NewListenAddr { address, .. } => log::info!("Listening on {address:?}"),
@@ -95,8 +97,9 @@ impl Node {
                         message_id,
                         message
                     })) => {
-                        log::info!("Got message: {} with ID:{message_id} from peer:{propagation_source}", String::from_utf8_lossy(&message.data));
-                        self.message_sender.send(bytes::Bytes::copy_from_slice(&message.data)).await?;
+                        let msg = serde_json::from_slice(&message.data)?;
+                        log::info!("Got message: {:?} with ID:{message_id} from peer:{propagation_source}", msg);
+                        self.message_sender.send(msg).await?;
                     },
                     SwarmEvent::Behaviour(event) => log::info!("Event received: {event:?}"),
                     _ => {}
@@ -105,19 +108,21 @@ impl Node {
         }
     }
 
-    fn handle_command(&mut self, command: Command) {
+    fn handle_command(&mut self, command: Command) -> Result<(), Box<dyn Error>> {
         match command {
-            Command::SendMessage { msg } => {
+            Command::SendMessage(msg) => {
                 if let Err(e) = self
                     .swarm
                     .behaviour_mut()
                     .gossipsub
-                    .publish(self.topic.clone(), msg)
+                    .publish(self.topic.clone(), serde_json::to_vec(&msg)?)
                 {
                     log::error!("Failed to publish: {e:?}");
                 }
             }
-        }
+        };
+
+        Ok(())
     }
 }
 
@@ -156,5 +161,11 @@ impl Behaviour {
 
 #[derive(Debug)]
 pub enum Command {
-    SendMessage { msg: bytes::Bytes },
+    SendMessage(Message),
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub enum Message {
+    Text(String),
+    FileId(String),
 }
