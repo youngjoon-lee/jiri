@@ -1,8 +1,9 @@
 use std::{
-    collections::{hash_map::DefaultHasher, HashMap},
+    collections::{hash_map::DefaultHasher, HashMap, HashSet},
     error::Error,
     hash::{Hash, Hasher},
     iter,
+    path::PathBuf,
     time::Duration,
 };
 
@@ -10,25 +11,28 @@ use async_std::io;
 use async_trait::async_trait;
 use futures::{
     channel::{mpsc, oneshot},
-    select, AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, StreamExt,
+    select, AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, FutureExt, SinkExt, StreamExt,
 };
 use libp2p::{
     core::upgrade::{read_length_prefixed, write_length_prefixed, Version},
     gossipsub, identity,
-    kad::{store::MemoryStore, Kademlia, KademliaEvent, QueryId, QueryResult},
+    kad::{store::MemoryStore, GetProvidersOk, Kademlia, KademliaEvent, QueryId, QueryResult},
     mdns, noise,
-    request_response::{self, ProtocolName, ProtocolSupport},
+    request_response::{self, ProtocolName, ProtocolSupport, RequestId, ResponseChannel},
     swarm::{NetworkBehaviour, SwarmBuilder, SwarmEvent},
     tcp, yamux, PeerId, Swarm, Transport,
 };
 use serde::{Deserialize, Serialize};
 
 pub struct Node {
-    swarm: Swarm<Behaviour>,
+    swarm: Swarm<JiriBehaviour>,
     topic: gossipsub::IdentTopic,
+    command_sender: mpsc::Sender<Command>,
     command_receiver: mpsc::Receiver<Command>,
     message_sender: async_channel::Sender<Message>,
     pending_start_providing: HashMap<QueryId, oneshot::Sender<()>>,
+    pending_get_providers: HashSet<QueryId>,
+    pending_request_file: HashMap<String, HashSet<RequestId>>,
 }
 
 impl Node {
@@ -51,7 +55,7 @@ impl Node {
             .boxed();
 
         let topic = gossipsub::IdentTopic::new("jiri-chat");
-        let behaviour = Behaviour::new(id_keys, peer_id, &topic)?;
+        let behaviour = JiriBehaviour::new(id_keys, peer_id, &topic)?;
 
         let mut swarm =
             SwarmBuilder::with_async_std_executor(transport, behaviour, peer_id).build();
@@ -65,11 +69,14 @@ impl Node {
             Node {
                 swarm,
                 topic,
+                command_sender: command_sender.clone(),
                 command_receiver,
                 message_sender,
                 pending_start_providing: Default::default(),
+                pending_get_providers: Default::default(),
+                pending_request_file: Default::default(),
             },
-            command_sender,
+            command_sender.clone(),
             message_receiver,
         ))
     }
@@ -90,29 +97,35 @@ impl Node {
                 },
                 event = self.swarm.select_next_some() => match event {
                     SwarmEvent::NewListenAddr { address, .. } => log::info!("Listening on {address:?}"),
-                    SwarmEvent::Behaviour(BehaviourEvent::Mdns(mdns::Event::Discovered(list))) => {
-                        for (peer_id, _) in list {
+                    SwarmEvent::Behaviour(JiriBehaviourEvent::Mdns(mdns::Event::Discovered(list))) => {
+                        for (peer_id, peer_addr) in list {
                             log::info!("mDNS discovered a new peer: {peer_id}");
                             self.swarm.behaviour_mut().gossipsub.add_explicit_peer(&peer_id);
+                            self.swarm.behaviour_mut().kademlia.add_address(&peer_id, peer_addr);
                         }
                     },
-                    SwarmEvent::Behaviour(BehaviourEvent::Mdns(mdns::Event::Expired(list))) => {
+                    SwarmEvent::Behaviour(JiriBehaviourEvent::Mdns(mdns::Event::Expired(list))) => {
                         for (peer_id, _) in list {
                             log::info!("mDNS found an expired peer: {peer_id}");
                             self.swarm.behaviour_mut().gossipsub.remove_explicit_peer(&peer_id);
+                            self.swarm.behaviour_mut().kademlia.remove_peer(&peer_id);
                         }
                     },
-                    SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(gossipsub::Event::Message {
+                    SwarmEvent::Behaviour(JiriBehaviourEvent::Gossipsub(gossipsub::Event::Message {
                         propagation_source,
                         message_id,
                         message
                     })) => {
                         let msg = serde_json::from_slice(&message.data)?;
-                        // TODO: if msg is FileName(..), request the file to the provider
                         log::info!("Got message: {:?} with ID:{message_id} from peer:{propagation_source}", msg);
-                        self.message_sender.send(msg).await?;
+                        match msg {
+                            Message::Text(_) => self.message_sender.send(msg).await?,
+                            Message::FileName(file_name) => {
+                                self.command_sender.feed(Command::GetFileProviders { file_name }).await?;
+                            },
+                        }
                     },
-                    SwarmEvent::Behaviour(BehaviourEvent::Kademlia(
+                    SwarmEvent::Behaviour(JiriBehaviourEvent::Kademlia(
                         KademliaEvent::OutboundQueryProgressed { id, result: QueryResult::StartProviding(_), .. }
                     )) => {
                         if let Some(sender) = self.pending_start_providing.remove(&id) {
@@ -123,12 +136,47 @@ impl Node {
                             log::error!("failed to find query {id:?} from pending_start_providing");
                         }
                     },
-                    SwarmEvent::Behaviour(BehaviourEvent::RequestResponse(
-                        request_response::Event::Message { message, .. }
+                    SwarmEvent::Behaviour(JiriBehaviourEvent::Kademlia(
+                        KademliaEvent::OutboundQueryProgressed { id, result: QueryResult::GetProviders(Ok(GetProvidersOk::FoundProviders { key, providers })), .. }
                     )) => {
-                        //TODO: implement this
-                        log::info!("message:{message:?}");
+                        if !self.pending_get_providers.remove(&id) {
+                            log::warn!("get_providers_progressed event has been already handled. skipping this duplicate event...");
+                            continue;
+                        }
+
+                        // Finish the query. We are only interested in the first result.
+                        self.swarm.behaviour_mut().kademlia.query_mut(&id).unwrap().finish();
+
+                        let file_name = String::from_utf8(key.to_vec())?;
+
+                        let requests = providers.into_iter().map(|peer| {
+                            let mut command_sender = self.command_sender.clone();
+                            let file_name = file_name.clone();
+                            async move {
+                                command_sender.feed(Command::RequestFile { file_name, peer }).await
+                            }.boxed()
+                        });
+
+                        // Wait until at least one Command::RequestFile feeding is done
+                        futures::future::select_ok(requests)
+                            .await
+                            .map_err(|_| "Failed to feed Command::RequestFile to any peers")?;
                     },
+                    SwarmEvent::Behaviour(JiriBehaviourEvent::RequestResponse(
+                        request_response::Event::Message { message, .. }
+                    )) => match message {
+                        request_response::Message::Request { request, channel, .. } => {
+                            let path = PathBuf::from(request.0.clone()); //TODO: manage path properly
+                            let file: Vec<u8> = std::fs::read(&path)?;
+                            self.command_sender.feed(Command::ResponseFile { file_name: request.0, file, channel: channel }).await?
+                        }
+                        request_response::Message::Response { request_id, response } => {
+                            log::debug!("FileResponse received: request_id:{request_id}");
+                            if let Some(_) = self.pending_request_file.remove(&response.file_name) {
+                                log::info!("File {} received: {:?}", response.file_name, response.file);
+                            }
+                        }
+                    }
                     SwarmEvent::Behaviour(event) => log::info!("Event received: {event:?}"),
                     _ => {}
                 },
@@ -156,6 +204,40 @@ impl Node {
                     .start_providing(file_name.into_bytes().into())?;
                 self.pending_start_providing.insert(query_id, sender);
             }
+            Command::GetFileProviders { file_name } => {
+                let query_id = self
+                    .swarm
+                    .behaviour_mut()
+                    .kademlia
+                    .get_providers(file_name.into_bytes().into());
+                self.pending_get_providers.insert(query_id);
+            }
+            Command::RequestFile { file_name, peer } => {
+                let request_id = self
+                    .swarm
+                    .behaviour_mut()
+                    .request_response
+                    .send_request(&peer, FileRequest(file_name.clone()));
+
+                if let Some(request_ids) = self.pending_request_file.get_mut(&file_name) {
+                    request_ids.insert(request_id);
+                } else {
+                    let mut request_ids: HashSet<RequestId> = Default::default();
+                    request_ids.insert(request_id);
+                    self.pending_request_file.insert(file_name, request_ids);
+                }
+            }
+            Command::ResponseFile {
+                file_name,
+                file,
+                channel,
+            } => {
+                self.swarm
+                    .behaviour_mut()
+                    .request_response
+                    .send_response(channel, FileResponse { file_name, file })
+                    .expect("Connection to peer to be still open");
+            }
         };
 
         Ok(())
@@ -163,14 +245,47 @@ impl Node {
 }
 
 #[derive(NetworkBehaviour)]
-struct Behaviour {
+#[behaviour(out_event = "JiriBehaviourEvent")]
+struct JiriBehaviour {
     gossipsub: gossipsub::Behaviour,
     mdns: mdns::async_io::Behaviour,
     kademlia: Kademlia<MemoryStore>,
     request_response: request_response::Behaviour<FileExchangeCodec>,
 }
 
-impl Behaviour {
+#[derive(Debug)]
+enum JiriBehaviourEvent {
+    Gossipsub(gossipsub::Event),
+    Mdns(mdns::Event),
+    Kademlia(KademliaEvent),
+    RequestResponse(request_response::Event<FileRequest, FileResponse>),
+}
+
+impl From<gossipsub::Event> for JiriBehaviourEvent {
+    fn from(event: gossipsub::Event) -> Self {
+        JiriBehaviourEvent::Gossipsub(event)
+    }
+}
+
+impl From<mdns::Event> for JiriBehaviourEvent {
+    fn from(event: mdns::Event) -> Self {
+        JiriBehaviourEvent::Mdns(event)
+    }
+}
+
+impl From<KademliaEvent> for JiriBehaviourEvent {
+    fn from(event: KademliaEvent) -> Self {
+        JiriBehaviourEvent::Kademlia(event)
+    }
+}
+
+impl From<request_response::Event<FileRequest, FileResponse>> for JiriBehaviourEvent {
+    fn from(event: request_response::Event<FileRequest, FileResponse>) -> Self {
+        JiriBehaviourEvent::RequestResponse(event)
+    }
+}
+
+impl JiriBehaviour {
     fn new(
         id_keys: identity::Keypair,
         peer_id: PeerId,
@@ -217,7 +332,10 @@ struct FileExchangeCodec();
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct FileRequest(String);
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FileResponse(Vec<u8>);
+pub struct FileResponse {
+    file_name: String,
+    file: Vec<u8>,
+}
 
 impl ProtocolName for FileExchangeProtocol {
     fn protocol_name(&self) -> &[u8] {
@@ -255,12 +373,21 @@ impl request_response::Codec for FileExchangeCodec {
     where
         T: AsyncRead + Unpin + Send,
     {
+        let vec = read_length_prefixed(io, 1_000_000).await?;
+        if vec.is_empty() {
+            return Err(io::ErrorKind::UnexpectedEof.into());
+        }
+        let file_name = String::from_utf8(vec).unwrap();
+
         let vec = read_length_prefixed(io, 536_870_912).await?;
         if vec.is_empty() {
             return Err(io::ErrorKind::UnexpectedEof.into());
         }
 
-        Ok(FileResponse(vec))
+        Ok(FileResponse {
+            file_name,
+            file: vec,
+        })
     }
 
     async fn write_request<T>(
@@ -282,12 +409,13 @@ impl request_response::Codec for FileExchangeCodec {
         &mut self,
         _: &FileExchangeProtocol,
         io: &mut T,
-        FileResponse(data): FileResponse,
+        FileResponse { file_name, file }: FileResponse,
     ) -> io::Result<()>
     where
         T: AsyncWrite + Unpin + Send,
     {
-        write_length_prefixed(io, data).await?;
+        write_length_prefixed(io, file_name).await?;
+        write_length_prefixed(io, file).await?;
         io.close().await?;
 
         Ok(())
@@ -300,6 +428,18 @@ pub enum Command {
     StartFileProviding {
         file_name: String,
         sender: oneshot::Sender<()>,
+    },
+    GetFileProviders {
+        file_name: String,
+    },
+    RequestFile {
+        file_name: String,
+        peer: PeerId,
+    },
+    ResponseFile {
+        file_name: String,
+        file: Vec<u8>,
+        channel: ResponseChannel<FileResponse>,
     },
 }
 
