@@ -63,13 +63,12 @@ mod filters {
             .and_then(handlers::send_message)
     }
 
-    // POST /file/:filename
+    // POST /file/:file_name
     pub fn send_file(
         command_sender: mpsc::Sender<Command>,
     ) -> impl Filter<Extract = (impl warp::Reply,), Error = warp::Rejection> + Clone {
         warp::post()
-            .and(warp::path!("file"))
-            .and(warp::path::param::<String>())
+            .and(warp::path!("file" / String))
             .and(warp::body::content_length_limit(512 * 1024 * 1024))
             .and(warp::body::bytes())
             .and(warp::any().map(move || command_sender.clone()))
@@ -99,7 +98,10 @@ mod filters {
 mod handlers {
     use std::convert::Infallible;
 
-    use futures::{channel::mpsc, SinkExt, StreamExt};
+    use futures::{
+        channel::{mpsc, oneshot},
+        SinkExt, StreamExt,
+    };
     use warp::{hyper::StatusCode, ws};
 
     use crate::p2p::{Command, Message};
@@ -120,13 +122,29 @@ mod handlers {
     }
 
     pub async fn send_file(
-        filename: String,
+        file_name: String,
         file: bytes::Bytes,
         mut command_sender: mpsc::Sender<Command>,
     ) -> Result<impl warp::Reply, Infallible> {
-        let msg = Message::FileName(filename);
-        log::info!("Got message via API: {:?}", msg);
-        // TODO: provide the file via Kademlia
+        let msg = Message::FileName(file_name.clone());
+        log::info!("Got send_file via API: {:?}", msg);
+
+        let (sender, receiver) = oneshot::channel();
+        if let Err(e) = command_sender
+            .send(Command::StartFileProviding {
+                file_name: file_name.clone(),
+                sender,
+            })
+            .await
+        {
+            log::error!("Failed to send Command::StartFileProviding to channel: {e:?}");
+            return Ok(StatusCode::INTERNAL_SERVER_ERROR);
+        }
+        if let Err(e) = receiver.await {
+            log::error!("Failed to wait until start_providing is registered: {e:?}");
+            return Ok(StatusCode::INTERNAL_SERVER_ERROR);
+        }
+
         if let Err(e) = command_sender.send(Command::SendMessage(msg)).await {
             log::error!("Failed to send msg to channel: {e:?}");
             return Ok(StatusCode::INTERNAL_SERVER_ERROR);

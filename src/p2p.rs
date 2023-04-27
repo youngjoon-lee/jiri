@@ -1,5 +1,5 @@
 use std::{
-    collections::hash_map::DefaultHasher,
+    collections::{hash_map::DefaultHasher, HashMap},
     error::Error,
     hash::{Hash, Hasher},
     iter,
@@ -9,12 +9,13 @@ use std::{
 use async_std::io;
 use async_trait::async_trait;
 use futures::{
-    channel::mpsc, select, AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, StreamExt,
+    channel::{mpsc, oneshot},
+    select, AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, StreamExt,
 };
 use libp2p::{
     core::upgrade::{read_length_prefixed, write_length_prefixed, Version},
     gossipsub, identity,
-    kad::{store::MemoryStore, Kademlia, KademliaEvent, QueryResult},
+    kad::{store::MemoryStore, Kademlia, KademliaEvent, QueryId, QueryResult},
     mdns, noise,
     request_response::{self, ProtocolName, ProtocolSupport},
     swarm::{NetworkBehaviour, SwarmBuilder, SwarmEvent},
@@ -27,6 +28,7 @@ pub struct Node {
     topic: gossipsub::IdentTopic,
     command_receiver: mpsc::Receiver<Command>,
     message_sender: async_channel::Sender<Message>,
+    pending_start_providing: HashMap<QueryId, oneshot::Sender<()>>,
 }
 
 impl Node {
@@ -65,6 +67,7 @@ impl Node {
                 topic,
                 command_receiver,
                 message_sender,
+                pending_start_providing: Default::default(),
             },
             command_sender,
             message_receiver,
@@ -112,8 +115,13 @@ impl Node {
                     SwarmEvent::Behaviour(BehaviourEvent::Kademlia(
                         KademliaEvent::OutboundQueryProgressed { id, result: QueryResult::StartProviding(_), .. }
                     )) => {
-                        //TODO: implement this
-                        log::info!("id:{id:?}");
+                        if let Some(sender) = self.pending_start_providing.remove(&id) {
+                            if let Err(e) = sender.send(()) {
+                                log::error!("failed to send signal that start_providing was completed: query_id:{id:?}, err:{e:?}");
+                            }
+                        } else {
+                            log::error!("failed to find query {id:?} from pending_start_providing");
+                        }
                     },
                     SwarmEvent::Behaviour(BehaviourEvent::RequestResponse(
                         request_response::Event::Message { message, .. }
@@ -139,6 +147,14 @@ impl Node {
                 {
                     log::error!("Failed to publish: {e:?}");
                 }
+            }
+            Command::StartFileProviding { file_name, sender } => {
+                let query_id = self
+                    .swarm
+                    .behaviour_mut()
+                    .kademlia
+                    .start_providing(file_name.into_bytes().into())?;
+                self.pending_start_providing.insert(query_id, sender);
             }
         };
 
@@ -251,12 +267,12 @@ impl request_response::Codec for FileExchangeCodec {
         &mut self,
         _: &FileExchangeProtocol,
         io: &mut T,
-        FileRequest(fileName): FileRequest,
+        FileRequest(file_name): FileRequest,
     ) -> io::Result<()>
     where
         T: AsyncWrite + Unpin + Send,
     {
-        write_length_prefixed(io, fileName).await?;
+        write_length_prefixed(io, file_name).await?;
         io.close().await?;
 
         Ok(())
@@ -281,6 +297,10 @@ impl request_response::Codec for FileExchangeCodec {
 #[derive(Debug)]
 pub enum Command {
     SendMessage(Message),
+    StartFileProviding {
+        file_name: String,
+        sender: oneshot::Sender<()>,
+    },
 }
 
 #[derive(Debug, Serialize, Deserialize)]
