@@ -11,7 +11,7 @@ use async_std::io;
 use async_trait::async_trait;
 use futures::{
     channel::{mpsc, oneshot},
-    select, AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, FutureExt, SinkExt, StreamExt,
+    select, AsyncRead, AsyncWrite, AsyncWriteExt, FutureExt, SinkExt, StreamExt,
 };
 use libp2p::{
     core::upgrade::{read_length_prefixed, write_length_prefixed, Version},
@@ -82,16 +82,8 @@ impl Node {
     }
 
     pub async fn run(mut self) -> Result<(), Box<dyn Error>> {
-        let mut stdin = io::BufReader::new(io::stdin()).lines().fuse();
-
         loop {
             select! {
-                line = stdin.select_next_some() => {
-                    let msg = serde_json::to_vec(&Message::Text(line?))?;
-                    if let Err(e) = self.swarm.behaviour_mut().gossipsub.publish(self.topic.clone(), msg) {
-                        log::error!("Failed to publish: {e:?}");
-                    }
-                },
                 command = self.command_receiver.select_next_some() => {
                     self.handle_command(command)?
                 },
