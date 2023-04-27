@@ -2,14 +2,21 @@ use std::{
     collections::hash_map::DefaultHasher,
     error::Error,
     hash::{Hash, Hasher},
+    iter,
     time::Duration,
 };
 
 use async_std::io;
-use futures::{channel::mpsc, select, AsyncBufReadExt, StreamExt};
+use async_trait::async_trait;
+use futures::{
+    channel::mpsc, select, AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, StreamExt,
+};
 use libp2p::{
-    core::upgrade::Version,
-    gossipsub, identity, mdns, noise,
+    core::upgrade::{read_length_prefixed, write_length_prefixed, Version},
+    gossipsub, identity,
+    kad::{store::MemoryStore, Kademlia, KademliaEvent, QueryResult},
+    mdns, noise,
+    request_response::{self, ProtocolName, ProtocolSupport},
     swarm::{NetworkBehaviour, SwarmBuilder, SwarmEvent},
     tcp, yamux, PeerId, Swarm, Transport,
 };
@@ -98,8 +105,21 @@ impl Node {
                         message
                     })) => {
                         let msg = serde_json::from_slice(&message.data)?;
+                        // TODO: if msg is FileName(..), request the file to the provider
                         log::info!("Got message: {:?} with ID:{message_id} from peer:{propagation_source}", msg);
                         self.message_sender.send(msg).await?;
+                    },
+                    SwarmEvent::Behaviour(BehaviourEvent::Kademlia(
+                        KademliaEvent::OutboundQueryProgressed { id, result: QueryResult::StartProviding(_), .. }
+                    )) => {
+                        //TODO: implement this
+                        log::info!("id:{id:?}");
+                    },
+                    SwarmEvent::Behaviour(BehaviourEvent::RequestResponse(
+                        request_response::Event::Message { message, .. }
+                    )) => {
+                        //TODO: implement this
+                        log::info!("message:{message:?}");
                     },
                     SwarmEvent::Behaviour(event) => log::info!("Event received: {event:?}"),
                     _ => {}
@@ -130,6 +150,8 @@ impl Node {
 struct Behaviour {
     gossipsub: gossipsub::Behaviour,
     mdns: mdns::async_io::Behaviour,
+    kademlia: Kademlia<MemoryStore>,
+    request_response: request_response::Behaviour<FileExchangeCodec>,
 }
 
 impl Behaviour {
@@ -155,7 +177,104 @@ impl Behaviour {
 
         let mdns = mdns::async_io::Behaviour::new(mdns::Config::default(), peer_id)?;
 
-        Ok(Self { gossipsub, mdns })
+        let kademlia = Kademlia::new(peer_id, MemoryStore::new(peer_id));
+
+        let request_response = request_response::Behaviour::new(
+            FileExchangeCodec(),
+            iter::once((FileExchangeProtocol(), ProtocolSupport::Full)),
+            Default::default(),
+        );
+
+        Ok(Self {
+            gossipsub,
+            mdns,
+            kademlia,
+            request_response,
+        })
+    }
+}
+
+#[derive(Debug, Clone)]
+struct FileExchangeProtocol();
+#[derive(Clone)]
+struct FileExchangeCodec();
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct FileRequest(String);
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FileResponse(Vec<u8>);
+
+impl ProtocolName for FileExchangeProtocol {
+    fn protocol_name(&self) -> &[u8] {
+        "/jiri-file-exchange/1".as_bytes()
+    }
+}
+
+#[async_trait]
+impl request_response::Codec for FileExchangeCodec {
+    type Protocol = FileExchangeProtocol;
+    type Request = FileRequest;
+    type Response = FileResponse;
+
+    async fn read_request<T>(
+        &mut self,
+        _: &FileExchangeProtocol,
+        io: &mut T,
+    ) -> io::Result<Self::Request>
+    where
+        T: AsyncRead + Unpin + Send,
+    {
+        let vec = read_length_prefixed(io, 1_000_000).await?;
+        if vec.is_empty() {
+            return Err(io::ErrorKind::UnexpectedEof.into());
+        }
+
+        Ok(FileRequest(String::from_utf8(vec).unwrap()))
+    }
+
+    async fn read_response<T>(
+        &mut self,
+        _: &FileExchangeProtocol,
+        io: &mut T,
+    ) -> io::Result<Self::Response>
+    where
+        T: AsyncRead + Unpin + Send,
+    {
+        let vec = read_length_prefixed(io, 536_870_912).await?;
+        if vec.is_empty() {
+            return Err(io::ErrorKind::UnexpectedEof.into());
+        }
+
+        Ok(FileResponse(vec))
+    }
+
+    async fn write_request<T>(
+        &mut self,
+        _: &FileExchangeProtocol,
+        io: &mut T,
+        FileRequest(fileName): FileRequest,
+    ) -> io::Result<()>
+    where
+        T: AsyncWrite + Unpin + Send,
+    {
+        write_length_prefixed(io, fileName).await?;
+        io.close().await?;
+
+        Ok(())
+    }
+
+    async fn write_response<T>(
+        &mut self,
+        _: &FileExchangeProtocol,
+        io: &mut T,
+        FileResponse(data): FileResponse,
+    ) -> io::Result<()>
+    where
+        T: AsyncWrite + Unpin + Send,
+    {
+        write_length_prefixed(io, data).await?;
+        io.close().await?;
+
+        Ok(())
     }
 }
 
@@ -167,5 +286,5 @@ pub enum Command {
 #[derive(Debug, Serialize, Deserialize)]
 pub enum Message {
     Text(String),
-    FileId(String),
+    FileName(String),
 }

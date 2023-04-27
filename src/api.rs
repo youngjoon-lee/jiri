@@ -46,35 +46,52 @@ mod filters {
         message_receiver: async_channel::Receiver<Message>,
     ) -> impl Filter<Extract = (impl warp::Reply,), Error = warp::Rejection> + Clone {
         send_message(command_sender.clone())
+            .or(send_file(command_sender.clone()))
             .or(status())
             .or(subscribe_messages(message_receiver.clone()))
     }
 
+    // POST /msg
     pub fn send_message(
         command_sender: mpsc::Sender<Command>,
     ) -> impl Filter<Extract = (impl warp::Reply,), Error = warp::Rejection> + Clone {
-        warp::path!("msg")
-            .and(warp::post())
+        warp::post()
+            .and(warp::path!("msg"))
             .and(warp::body::content_length_limit(16 * 1024))
             .and(warp::body::bytes())
             .and(warp::any().map(move || command_sender.clone()))
             .and_then(handlers::send_message)
     }
 
+    // POST /file/:filename
+    pub fn send_file(
+        command_sender: mpsc::Sender<Command>,
+    ) -> impl Filter<Extract = (impl warp::Reply,), Error = warp::Rejection> + Clone {
+        warp::post()
+            .and(warp::path!("file"))
+            .and(warp::path::param::<String>())
+            .and(warp::body::content_length_limit(512 * 1024 * 1024))
+            .and(warp::body::bytes())
+            .and(warp::any().map(move || command_sender.clone()))
+            .and_then(handlers::send_file)
+    }
+
+    // WS /msg
     pub fn subscribe_messages(
         message_receiver: async_channel::Receiver<Message>,
     ) -> impl Filter<Extract = (impl warp::Reply,), Error = warp::Rejection> + Clone {
-        warp::path!("msg")
-            .and(warp::ws())
+        warp::ws()
+            .and(warp::path!("msg"))
             .and(warp::any().map(move || message_receiver.clone()))
             .map(|ws: warp::ws::Ws, message_receiver| {
                 ws.on_upgrade(move |socket| handlers::subscribe_messages(socket, message_receiver))
             })
     }
 
+    // GET /status
     pub fn status() -> impl Filter<Extract = (impl warp::Reply,), Error = warp::Rejection> + Clone {
-        warp::path!("status")
-            .and(warp::get())
+        warp::get()
+            .and(warp::path!("status"))
             .and_then(handlers::status)
     }
 }
@@ -95,6 +112,21 @@ mod handlers {
     ) -> Result<impl warp::Reply, Infallible> {
         let msg = Message::Text(String::from_utf8_lossy(&text).to_string());
         log::info!("Got message via API: {:?}", msg);
+        if let Err(e) = command_sender.send(Command::SendMessage(msg)).await {
+            log::error!("Failed to send msg to channel: {e:?}");
+            return Ok(StatusCode::INTERNAL_SERVER_ERROR);
+        }
+        Ok(StatusCode::OK)
+    }
+
+    pub async fn send_file(
+        filename: String,
+        file: bytes::Bytes,
+        mut command_sender: mpsc::Sender<Command>,
+    ) -> Result<impl warp::Reply, Infallible> {
+        let msg = Message::FileName(filename);
+        log::info!("Got message via API: {:?}", msg);
+        // TODO: provide the file via Kademlia
         if let Err(e) = command_sender.send(Command::SendMessage(msg)).await {
             log::error!("Failed to send msg to channel: {e:?}");
             return Ok(StatusCode::INTERNAL_SERVER_ERROR);
