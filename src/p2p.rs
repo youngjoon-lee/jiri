@@ -112,9 +112,10 @@ impl Node {
                         log::info!("Got message: {:?} with ID:{message_id} from peer:{propagation_source}", msg);
                         match msg {
                             Message::Text(_) => self.message_sender.send(msg).await?,
-                            Message::FileName(file_name) => {
+                            Message::FileAd(file_name) => {
                                 self.command_sender.feed(Command::GetFileProviders { file_name }).await?;
                             },
+                            _ => {},
                         }
                     },
                     SwarmEvent::Behaviour(JiriBehaviourEvent::Kademlia(
@@ -166,6 +167,7 @@ impl Node {
                             log::debug!("FileResponse received: request_id:{request_id}");
                             if let Some(_) = self.pending_request_file.remove(&response.file_name) {
                                 log::info!("File {} received: {:?}", response.file_name, response.file);
+                                self.message_sender.send(Message::File { file_name: response.file_name, file: response.file }).await?;
                             }
                         }
                     }
@@ -438,5 +440,6 @@ pub enum Command {
 #[derive(Debug, Serialize, Deserialize)]
 pub enum Message {
     Text(String),
-    FileName(String),
+    FileAd(String),
+    File { file_name: String, file: Vec<u8> },
 }

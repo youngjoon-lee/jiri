@@ -126,7 +126,7 @@ mod handlers {
         file: bytes::Bytes,
         mut command_sender: mpsc::Sender<Command>,
     ) -> Result<impl warp::Reply, Infallible> {
-        let msg = Message::FileName(file_name.clone());
+        let msg = Message::FileAd(file_name.clone());
         log::info!("Got send_file via API: {:?}", msg);
 
         // TODO: handle file properly
@@ -168,7 +168,12 @@ mod handlers {
             match msg {
                 Message::Text(text) => {
                     if let Err(e) = sender.send(ws::Message::text(text)).await {
-                        log::error!("Failed to send msg to WebSocket: {e:?}");
+                        log::error!("Failed to send text message to WebSocket: {e:?}");
+                    }
+                }
+                Message::File { file, .. } => {
+                    if let Err(e) = sender.send(ws::Message::binary(file)).await {
+                        log::error!("Failed to send file message to WebSocket: {e:?}");
                     }
                 }
                 _ => {
