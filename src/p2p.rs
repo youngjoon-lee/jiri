@@ -21,12 +21,13 @@ use futures::{
 };
 use libp2p::{
     core::upgrade::Version,
-    gossipsub, identity,
+    gossipsub::{self, Message, MessageId},
+    identity,
     kad::{GetProvidersOk, KademliaEvent, QueryId, QueryResult},
     mdns, noise,
-    request_response::{self, RequestId},
+    request_response::{self, RequestId, ResponseChannel},
     swarm::{SwarmBuilder, SwarmEvent},
-    tcp, yamux, Swarm, Transport,
+    tcp, yamux, Multiaddr, PeerId, Swarm, Transport,
 };
 
 use crate::p2p::behaviour::{JiriBehaviour, JiriBehaviourEvent};
@@ -120,25 +121,12 @@ impl Node {
             SwarmEvent::NewListenAddr { address, .. } => log::info!("Listening on {address:?}"),
             SwarmEvent::Behaviour(JiriBehaviourEvent::Mdns(mdns::Event::Discovered(list))) => {
                 for (peer_id, peer_addr) in list {
-                    log::info!("mDNS discovered a new peer: {peer_id}");
-                    self.swarm
-                        .behaviour_mut()
-                        .gossipsub
-                        .add_explicit_peer(&peer_id);
-                    self.swarm
-                        .behaviour_mut()
-                        .kademlia
-                        .add_address(&peer_id, peer_addr);
+                    self.handle_peer_discovered(peer_id, peer_addr);
                 }
             }
             SwarmEvent::Behaviour(JiriBehaviourEvent::Mdns(mdns::Event::Expired(list))) => {
                 for (peer_id, _) in list {
-                    log::info!("mDNS found an expired peer: {peer_id}");
-                    self.swarm
-                        .behaviour_mut()
-                        .gossipsub
-                        .remove_explicit_peer(&peer_id);
-                    self.swarm.behaviour_mut().kademlia.remove_peer(&peer_id);
+                    self.handle_peer_expired(peer_id);
                 }
             }
             SwarmEvent::Behaviour(JiriBehaviourEvent::Gossipsub(gossipsub::Event::Message {
@@ -146,20 +134,8 @@ impl Node {
                 message_id,
                 message,
             })) => {
-                let msg = serde_json::from_slice(&message.data)?;
-                log::info!(
-                    "Got message: {:?} with ID:{message_id} from peer:{propagation_source}",
-                    msg
-                );
-                match msg {
-                    message::Message::Text(_) => self.message_sender.send(msg).await?,
-                    message::Message::FileAd(file_name) => {
-                        self.command_sender
-                            .feed(command::Command::GetFileProviders { file_name })
-                            .await?;
-                    }
-                    _ => {}
-                }
+                self.handle_message(propagation_source, message_id, message)
+                    .await?
             }
             SwarmEvent::Behaviour(JiriBehaviourEvent::Kademlia(
                 KademliaEvent::OutboundQueryProgressed {
@@ -168,13 +144,7 @@ impl Node {
                     ..
                 },
             )) => {
-                if let Some(sender) = self.pending_start_providing.remove(&id) {
-                    if let Err(e) = sender.send(()) {
-                        log::error!("failed to send signal that start_providing was completed: query_id:{id:?}, err:{e:?}");
-                    }
-                } else {
-                    log::error!("failed to find query {id:?} from pending_start_providing");
-                }
+                self.handle_start_providing_progressed(id);
             }
             SwarmEvent::Behaviour(JiriBehaviourEvent::Kademlia(
                 KademliaEvent::OutboundQueryProgressed {
@@ -184,70 +154,157 @@ impl Node {
                     ..
                 },
             )) => {
-                if !self.pending_get_providers.remove(&id) {
-                    log::warn!("get_providers_progressed event has been already handled. skipping this duplicate event...");
-                    return Ok(());
-                }
-
-                // Finish the query. We are only interested in the first result.
-                self.swarm
-                    .behaviour_mut()
-                    .kademlia
-                    .query_mut(&id)
-                    .unwrap()
-                    .finish();
-
-                let file_name = String::from_utf8(key.to_vec())?;
-
-                let requests = providers.into_iter().map(|peer| {
-                    let mut command_sender = self.command_sender.clone();
-                    let file_name = file_name.clone();
-                    async move {
-                        command_sender
-                            .feed(command::Command::RequestFile { file_name, peer })
-                            .await
-                    }
-                    .boxed()
-                });
-
-                // Wait until at least one command::Command::RequestFile feeding is done
-                futures::future::select_ok(requests)
-                    .await
-                    .map_err(|_| "Failed to feed command::Command::RequestFile to any peers")?;
+                self.handle_get_providers_progressed(id, key.to_vec(), providers)
+                    .await?
             }
             SwarmEvent::Behaviour(JiriBehaviourEvent::RequestResponse(
                 request_response::Event::Message { message, .. },
             )) => match message {
                 request_response::Message::Request {
                     request, channel, ..
-                } => {
-                    let file: Vec<u8> = std::fs::read(&self.tmp_dir.join(request.0.clone()))?;
-                    self.command_sender
-                        .feed(command::Command::ResponseFile {
-                            file_name: request.0,
-                            file,
-                            channel: channel,
-                        })
-                        .await?
-                }
+                } => self.handle_file_request_event(request, channel).await?,
                 request_response::Message::Response {
                     request_id,
                     response,
                 } => {
-                    log::debug!("FileResponse received: request_id:{request_id}");
-                    if let Some(_) = self.pending_request_file.remove(&response.file_name) {
-                        log::info!("File {} received: {:?}", response.file_name, response.file);
-                        self.message_sender
-                            .send(message::Message::File {
-                                file_name: response.file_name,
-                                file: response.file,
-                            })
-                            .await?;
-                    }
+                    self.handle_file_response_event(request_id, response)
+                        .await?
                 }
             },
-            SwarmEvent::Behaviour(event) => log::info!("Event received: {event:?}"),
+            SwarmEvent::Behaviour(event) => log::info!("Unrecognized event received: {event:?}"),
             _ => {}
+        }
+
+        Ok(())
+    }
+
+    fn handle_peer_discovered(&mut self, peer_id: PeerId, peer_addr: Multiaddr) {
+        log::info!("mDNS discovered a new peer: {peer_id}");
+        self.swarm
+            .behaviour_mut()
+            .gossipsub
+            .add_explicit_peer(&peer_id);
+        self.swarm
+            .behaviour_mut()
+            .kademlia
+            .add_address(&peer_id, peer_addr);
+    }
+
+    fn handle_peer_expired(&mut self, peer_id: PeerId) {
+        log::info!("mDNS found an expired peer: {peer_id}");
+        self.swarm
+            .behaviour_mut()
+            .gossipsub
+            .remove_explicit_peer(&peer_id);
+        self.swarm.behaviour_mut().kademlia.remove_peer(&peer_id);
+    }
+
+    async fn handle_message(
+        &mut self,
+        propagation_source: PeerId,
+        message_id: MessageId,
+        message: Message,
+    ) -> Result<(), Box<dyn Error>> {
+        let msg = serde_json::from_slice(&message.data)?;
+        log::info!(
+            "Got message: {:?} with ID:{message_id} from peer:{propagation_source}",
+            msg
+        );
+
+        match msg {
+            message::Message::Text(_) => self.message_sender.send(msg).await?,
+            message::Message::FileAd(file_name) => {
+                self.command_sender
+                    .feed(command::Command::GetFileProviders { file_name })
+                    .await?;
+            }
+            _ => {}
+        };
+
+        Ok(())
+    }
+
+    fn handle_start_providing_progressed(&mut self, id: QueryId) {
+        if let Some(sender) = self.pending_start_providing.remove(&id) {
+            if let Err(e) = sender.send(()) {
+                log::error!("failed to send signal that start_providing was completed: query_id:{id:?}, err:{e:?}");
+            }
+        } else {
+            log::error!("failed to find query {id:?} from pending_start_providing");
+        }
+    }
+
+    async fn handle_get_providers_progressed(
+        &mut self,
+        id: QueryId,
+        key: Vec<u8>,
+        providers: HashSet<PeerId>,
+    ) -> Result<(), Box<dyn Error>> {
+        if !self.pending_get_providers.remove(&id) {
+            log::warn!("get_providers_progressed event has been already handled. skipping this duplicate event...");
+            return Ok(());
+        }
+
+        // Finish the query. We are only interested in the first result.
+        self.swarm
+            .behaviour_mut()
+            .kademlia
+            .query_mut(&id)
+            .unwrap()
+            .finish();
+
+        let file_name = String::from_utf8(key)?;
+
+        let requests = providers.into_iter().map(|peer| {
+            let mut command_sender = self.command_sender.clone();
+            let file_name = file_name.clone();
+            async move {
+                command_sender
+                    .feed(command::Command::RequestFile { file_name, peer })
+                    .await
+            }
+            .boxed()
+        });
+
+        // Wait until at least one command::Command::RequestFile feeding is done
+        futures::future::select_ok(requests)
+            .await
+            .map_err(|_| "Failed to feed command::Command::RequestFile to any peers")?;
+
+        Ok(())
+    }
+
+    async fn handle_file_request_event(
+        &mut self,
+        request: FileRequest,
+        channel: ResponseChannel<FileResponse>,
+    ) -> Result<(), Box<dyn Error>> {
+        let file: Vec<u8> = std::fs::read(&self.tmp_dir.join(request.0.clone()))?;
+        self.command_sender
+            .feed(command::Command::ResponseFile {
+                file_name: request.0,
+                file,
+                channel,
+            })
+            .await?;
+
+        Ok(())
+    }
+
+    async fn handle_file_response_event(
+        &mut self,
+        request_id: RequestId,
+        response: FileResponse,
+    ) -> Result<(), Box<dyn Error>> {
+        log::debug!("FileResponse received: request_id:{request_id}");
+        if let Some(_) = self.pending_request_file.remove(&response.file_name) {
+            log::info!("File {} received: {:?}", response.file_name, response.file);
+            self.message_sender
+                .send(message::Message::File {
+                    file_name: response.file_name,
+                    file: response.file,
+                })
+                .await?;
         }
 
         Ok(())
