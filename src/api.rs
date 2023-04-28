@@ -6,18 +6,18 @@ use std::error::Error;
 use futures::channel::mpsc;
 use serde_derive::{Deserialize, Serialize};
 
-use crate::p2p::{Command, Message};
+use crate::p2p::{command, message};
 
 #[derive(Debug)]
 pub struct Api {
-    command_sender: mpsc::Sender<Command>,
-    message_receiver: async_channel::Receiver<Message>,
+    command_sender: mpsc::Sender<command::Command>,
+    message_receiver: async_channel::Receiver<message::Message>,
 }
 
 impl Api {
     pub fn new(
-        command_sender: mpsc::Sender<Command>,
-        message_receiver: async_channel::Receiver<Message>,
+        command_sender: mpsc::Sender<command::Command>,
+        message_receiver: async_channel::Receiver<message::Message>,
     ) -> Self {
         Api {
             command_sender,

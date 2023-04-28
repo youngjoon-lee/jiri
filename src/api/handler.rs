@@ -6,17 +6,20 @@ use futures::{
 };
 use warp::{hyper::StatusCode, ws};
 
-use crate::p2p::{Command, Message};
+use crate::p2p::{command, message};
 
 use super::Status;
 
 pub async fn send_message(
     text: bytes::Bytes,
-    mut command_sender: mpsc::Sender<Command>,
+    mut command_sender: mpsc::Sender<command::Command>,
 ) -> Result<impl warp::Reply, Infallible> {
-    let msg = Message::Text(String::from_utf8_lossy(&text).to_string());
+    let msg = message::Message::Text(String::from_utf8_lossy(&text).to_string());
     log::info!("Got message via API: {:?}", msg);
-    if let Err(e) = command_sender.send(Command::SendMessage(msg)).await {
+    if let Err(e) = command_sender
+        .send(command::Command::SendMessage(msg))
+        .await
+    {
         log::error!("Failed to send msg to channel: {e:?}");
         return Ok(StatusCode::INTERNAL_SERVER_ERROR);
     }
@@ -26,21 +29,21 @@ pub async fn send_message(
 pub async fn send_file(
     file_name: String,
     file: bytes::Bytes,
-    mut command_sender: mpsc::Sender<Command>,
+    mut command_sender: mpsc::Sender<command::Command>,
 ) -> Result<impl warp::Reply, Infallible> {
-    let msg = Message::FileAd(file_name.clone());
+    let msg = message::Message::FileAd(file_name.clone());
     log::info!("Got send_file via API: {:?}", msg);
 
     let (sender, receiver) = oneshot::channel();
     if let Err(e) = command_sender
-        .send(Command::StartFileProviding {
+        .send(command::Command::StartFileProviding {
             file_name: file_name.clone(),
             file: file.into(),
             sender,
         })
         .await
     {
-        log::error!("Failed to send Command::StartFileProviding to channel: {e:?}");
+        log::error!("Failed to send command::Command::StartFileProviding to channel: {e:?}");
         return Ok(StatusCode::INTERNAL_SERVER_ERROR);
     }
     if let Err(e) = receiver.await {
@@ -48,7 +51,10 @@ pub async fn send_file(
         return Ok(StatusCode::INTERNAL_SERVER_ERROR);
     }
 
-    if let Err(e) = command_sender.send(Command::SendMessage(msg)).await {
+    if let Err(e) = command_sender
+        .send(command::Command::SendMessage(msg))
+        .await
+    {
         log::error!("Failed to send msg to channel: {e:?}");
         return Ok(StatusCode::INTERNAL_SERVER_ERROR);
     }
@@ -57,18 +63,18 @@ pub async fn send_file(
 
 pub async fn subscribe_messages(
     ws: ws::WebSocket,
-    message_receiver: async_channel::Receiver<Message>,
+    message_receiver: async_channel::Receiver<message::Message>,
 ) {
     let (mut sender, ..) = ws.split();
 
     while let Ok(msg) = message_receiver.recv().await {
         match msg {
-            Message::Text(text) => {
+            message::Message::Text(text) => {
                 if let Err(e) = sender.send(ws::Message::text(text)).await {
                     log::error!("Failed to send text message to WebSocket: {e:?}");
                 }
             }
-            Message::File { file, .. } => {
+            message::Message::File { file, .. } => {
                 if let Err(e) = sender.send(ws::Message::binary(file)).await {
                     log::error!("Failed to send file message to WebSocket: {e:?}");
                 }

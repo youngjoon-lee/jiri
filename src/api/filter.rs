@@ -1,13 +1,13 @@
-use crate::p2p::{Command, Message};
-
 use futures::channel::mpsc;
 use warp::Filter;
+
+use crate::p2p::{command, message};
 
 use super::handler;
 
 pub fn all(
-    command_sender: mpsc::Sender<Command>,
-    message_receiver: async_channel::Receiver<Message>,
+    command_sender: mpsc::Sender<command::Command>,
+    message_receiver: async_channel::Receiver<message::Message>,
 ) -> impl Filter<Extract = (impl warp::Reply,), Error = warp::Rejection> + Clone {
     send_message(command_sender.clone())
         .or(send_file(command_sender.clone()))
@@ -17,7 +17,7 @@ pub fn all(
 
 // POST /msg
 pub fn send_message(
-    command_sender: mpsc::Sender<Command>,
+    command_sender: mpsc::Sender<command::Command>,
 ) -> impl Filter<Extract = (impl warp::Reply,), Error = warp::Rejection> + Clone {
     warp::post()
         .and(warp::path!("msg"))
@@ -29,7 +29,7 @@ pub fn send_message(
 
 // POST /file/:file_name
 pub fn send_file(
-    command_sender: mpsc::Sender<Command>,
+    command_sender: mpsc::Sender<command::Command>,
 ) -> impl Filter<Extract = (impl warp::Reply,), Error = warp::Rejection> + Clone {
     warp::post()
         .and(warp::path!("file" / String))
@@ -41,7 +41,7 @@ pub fn send_file(
 
 // WS /msg
 pub fn subscribe_messages(
-    message_receiver: async_channel::Receiver<Message>,
+    message_receiver: async_channel::Receiver<message::Message>,
 ) -> impl Filter<Extract = (impl warp::Reply,), Error = warp::Rejection> + Clone {
     warp::ws()
         .and(warp::path!("msg"))
