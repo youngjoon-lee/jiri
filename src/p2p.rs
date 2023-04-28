@@ -1,10 +1,14 @@
 use std::{
     collections::{hash_map::DefaultHasher, HashMap, HashSet},
+    env,
     error::Error,
+    fs::{self, File},
     hash::{Hash, Hasher},
+    io::Write,
     iter,
     path::PathBuf,
-    time::Duration,
+    process,
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use async_std::io;
@@ -33,6 +37,7 @@ pub struct Node {
     pending_start_providing: HashMap<QueryId, oneshot::Sender<()>>,
     pending_get_providers: HashSet<QueryId>,
     pending_request_file: HashMap<String, HashSet<RequestId>>,
+    tmp_dir: PathBuf,
 }
 
 impl Node {
@@ -65,6 +70,13 @@ impl Node {
         let (command_sender, command_receiver) = mpsc::channel(0);
         let (message_sender, message_receiver) = async_channel::unbounded();
 
+        let tmp_dir = env::temp_dir().join(format!(
+            "jiri.{}.{}",
+            process::id(),
+            SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
+        ));
+        fs::create_dir(&tmp_dir)?;
+
         Ok((
             Node {
                 swarm,
@@ -75,6 +87,7 @@ impl Node {
                 pending_start_providing: Default::default(),
                 pending_get_providers: Default::default(),
                 pending_request_file: Default::default(),
+                tmp_dir,
             },
             command_sender.clone(),
             message_receiver,
@@ -159,8 +172,7 @@ impl Node {
                         request_response::Event::Message { message, .. }
                     )) => match message {
                         request_response::Message::Request { request, channel, .. } => {
-                            let path = PathBuf::from(request.0.clone()); //TODO: manage path properly
-                            let file: Vec<u8> = std::fs::read(&path)?;
+                            let file: Vec<u8> = std::fs::read(&self.tmp_dir.join(request.0.clone()))?;
                             self.command_sender.feed(Command::ResponseFile { file_name: request.0, file, channel: channel }).await?
                         }
                         request_response::Message::Response { request_id, response } => {
@@ -190,7 +202,16 @@ impl Node {
                     log::error!("Failed to publish: {e:?}");
                 }
             }
-            Command::StartFileProviding { file_name, sender } => {
+            Command::StartFileProviding {
+                file_name,
+                file,
+                sender,
+            } => {
+                if let Err(e) = self.create_tmp_file(file_name.clone(), file) {
+                    log::error!("failed to create tmp file: {e:?}");
+                    return Err(Box::from(e));
+                }
+
                 let query_id = self
                     .swarm
                     .behaviour_mut()
@@ -234,6 +255,12 @@ impl Node {
             }
         };
 
+        Ok(())
+    }
+
+    fn create_tmp_file(&self, file_name: String, file: Vec<u8>) -> io::Result<()> {
+        let path = self.tmp_dir.join(file_name.clone());
+        File::create(path)?.write(&file)?;
         Ok(())
     }
 }
@@ -421,6 +448,7 @@ pub enum Command {
     SendMessage(Message),
     StartFileProviding {
         file_name: String,
+        file: Vec<u8>,
         sender: oneshot::Sender<()>,
     },
     GetFileProviders {

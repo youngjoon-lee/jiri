@@ -96,7 +96,7 @@ mod filters {
 }
 
 mod handlers {
-    use std::{convert::Infallible, path::PathBuf};
+    use std::convert::Infallible;
 
     use futures::{
         channel::{mpsc, oneshot},
@@ -129,16 +129,11 @@ mod handlers {
         let msg = Message::FileAd(file_name.clone());
         log::info!("Got send_file via API: {:?}", msg);
 
-        // TODO: handle file properly
-        if let Err(e) = std::fs::write(PathBuf::from(file_name.clone()), file) {
-            log::error!("Failed to write file {file_name}: {e:?}");
-            return Ok(StatusCode::INTERNAL_SERVER_ERROR);
-        }
-
         let (sender, receiver) = oneshot::channel();
         if let Err(e) = command_sender
             .send(Command::StartFileProviding {
                 file_name: file_name.clone(),
+                file: file.into(),
                 sender,
             })
             .await
