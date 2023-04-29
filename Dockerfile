@@ -1,8 +1,10 @@
 FROM rust:1.69-slim-bullseye AS builder
 
+ARG CARGO_BUILD_ARGS
+
 WORKDIR /usr/src/jiri
 COPY . .
-RUN cargo build --release
+RUN cargo build $CARGO_BUILD_ARGS
 
 ########################################
 
