@@ -10,7 +10,7 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  Build & Unit Tests:
+  build-and-unittests:
     runs-on: ubuntu-latest
 
     steps:
@@ -28,7 +28,7 @@ jobs:
     - name: Run integration tests
       run: cargo test --test "*" --verbose
 
-  Integration Tests:
+  integration-tests:
     runs-on: ubuntu-latest
 
     steps:
