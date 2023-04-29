@@ -9,6 +9,7 @@ use std::{
     error::Error,
     fs::{self, File},
     io::Write,
+    net::SocketAddrV4,
     path::PathBuf,
     process,
     time::{SystemTime, UNIX_EPOCH},
@@ -68,10 +69,7 @@ impl Node {
         let topic = gossipsub::IdentTopic::new("jiri-chat");
         let behaviour = JiriBehaviour::new(id_keys, peer_id, &topic)?;
 
-        let mut swarm =
-            SwarmBuilder::with_async_std_executor(transport, behaviour, peer_id).build();
-
-        swarm.listen_on("/ip4/0.0.0.0/tcp/0".parse()?)?;
+        let swarm = SwarmBuilder::with_async_std_executor(transport, behaviour, peer_id).build();
 
         let (command_sender, command_receiver) = mpsc::channel(0);
         let (message_sender, message_receiver) = async_channel::unbounded();
@@ -100,7 +98,11 @@ impl Node {
         ))
     }
 
-    pub async fn run(mut self) -> Result<(), Box<dyn Error>> {
+    pub async fn run(mut self, laddr: &String) -> Result<(), Box<dyn Error>> {
+        let addr = laddr.parse::<SocketAddrV4>()?;
+        self.swarm
+            .listen_on(format!("/ip4/{}/tcp/{}", addr.ip().to_string(), addr.port()).parse()?)?;
+
         loop {
             select! {
                 command = self.command_receiver.select_next_some() => {

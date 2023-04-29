@@ -1,7 +1,7 @@
 mod filter;
 mod handler;
 
-use std::error::Error;
+use std::{error::Error, net::SocketAddrV4};
 
 use futures::channel::mpsc;
 use serde_derive::{Deserialize, Serialize};
@@ -25,9 +25,12 @@ impl Api {
         }
     }
 
-    pub async fn run(&mut self) -> Result<(), Box<dyn Error>> {
+    pub async fn run(&mut self, laddr: &String) -> Result<(), Box<dyn Error>> {
+        let addr = laddr.parse::<SocketAddrV4>()?;
         let routes = filter::all(self.command_sender.clone(), self.message_receiver.clone());
-        warp::serve(routes).run(([0, 0, 0, 0], 0)).await;
+        warp::serve(routes)
+            .run((addr.ip().octets(), addr.port()))
+            .await;
         Ok(())
     }
 }
