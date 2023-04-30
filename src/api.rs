@@ -28,9 +28,16 @@ impl Api {
     pub async fn run(&mut self, laddr: &String) -> Result<(), Box<dyn Error>> {
         let addr = laddr.parse::<SocketAddrV4>()?;
         let routes = filter::all(self.command_sender.clone(), self.message_receiver.clone());
-        warp::serve(routes)
-            .run((addr.ip().octets(), addr.port()))
-            .await;
+        let (_, fut) = warp::serve(routes).bind_with_graceful_shutdown(
+            (addr.ip().octets(), addr.port()),
+            async move {
+                tokio::signal::ctrl_c()
+                    .await
+                    .expect("Failed to listen to shutdown signal");
+            },
+        );
+        fut.await;
+        log::info!("Signal(interupt) detected");
         Ok(())
     }
 }
