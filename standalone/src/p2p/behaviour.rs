@@ -22,7 +22,7 @@ use super::file_exchange::{FileExchangeCodec, FileExchangeProtocol};
 pub struct JiriBehaviour {
     pub gossipsub: gossipsub::Behaviour,
     pub floodsub: Floodsub,
-    //TODO: Understand what keep_alive actually is
+    //TODO: Understand what keep_alive actually is: https://github.com/libp2p/rust-libp2p/blob/3c5940aeadb9ed8527b6f7aa158797359085293d/examples/ping-example/src/main.rs#L86
     pub keep_alive: keep_alive::Behaviour,
     pub mdns: mdns::async_io::Behaviour,
     pub kademlia: Kademlia<MemoryStore>,
