@@ -9,14 +9,14 @@ on:
 env:
   CARGO_TERM_COLOR: always
 
-defaults:
-  run:
-    working-directory: ./standalone
-
 jobs:
   build:
 
     runs-on: ubuntu-latest
+
+  defaults:
+    run:
+      working-directory: ./standalone
 
     steps:
     - uses: actions/checkout@v3
