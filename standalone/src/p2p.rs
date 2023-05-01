@@ -18,17 +18,18 @@ use std::{
 use async_std::io;
 use futures::{
     channel::{mpsc, oneshot},
+    future::Either,
     select, FutureExt, SinkExt, StreamExt,
 };
 use libp2p::{
-    core::upgrade::Version,
-    gossipsub::{self, Message, MessageId},
-    identity,
+    core::{muxing::StreamMuxerBox, transport::OrTransport, upgrade::Version},
+    floodsub::{self, FloodsubEvent},
+    gossipsub, identity,
     kad::{GetProvidersOk, KademliaEvent, QueryId, QueryResult},
     mdns, noise,
     request_response::{self, RequestId, ResponseChannel},
     swarm::{SwarmBuilder, SwarmEvent},
-    tcp, yamux, Multiaddr, PeerId, Swarm, Transport,
+    tcp, websocket, yamux, Multiaddr, PeerId, Swarm, Transport,
 };
 
 use crate::p2p::behaviour::{JiriBehaviour, JiriBehaviourEvent};
@@ -60,14 +61,28 @@ impl Node {
         let peer_id = id_keys.public().to_peer_id();
         log::info!("Peer {peer_id} generated");
 
-        let transport = tcp::async_io::Transport::default()
+        let tcp_transport = tcp::async_io::Transport::default()
             .upgrade(Version::V1Lazy)
             .authenticate(noise::NoiseAuthenticated::xx(&id_keys)?)
             .multiplex(yamux::YamuxConfig::default())
             .boxed();
+        let ws_transport =
+            websocket::WsConfig::new(tcp::async_io::Transport::new(tcp::Config::new()))
+                .upgrade(Version::V1)
+                .authenticate(noise::NoiseAuthenticated::xx(&id_keys)?)
+                .multiplex(yamux::YamuxConfig::default())
+                .boxed();
+        let transport = OrTransport::new(tcp_transport, ws_transport)
+            .map(|either_output, _| match either_output {
+                Either::Left((peer_id, muxer)) => (peer_id, StreamMuxerBox::new(muxer)),
+                Either::Right((peer_id, muxer)) => (peer_id, StreamMuxerBox::new(muxer)),
+            })
+            .boxed();
 
-        let topic = gossipsub::IdentTopic::new("jiri-chat");
-        let behaviour = JiriBehaviour::new(id_keys, peer_id, &topic)?;
+        let gossipsub_topic = gossipsub::IdentTopic::new("jiri-chat");
+        let floodsub_topic = floodsub::Topic::new("jiri-chat-floodsub");
+
+        let behaviour = JiriBehaviour::new(id_keys, peer_id, &gossipsub_topic, floodsub_topic)?;
 
         let swarm = SwarmBuilder::with_async_std_executor(transport, behaviour, peer_id).build();
 
@@ -84,7 +99,7 @@ impl Node {
         Ok((
             Node {
                 swarm,
-                topic,
+                topic: gossipsub_topic,
                 command_sender: command_sender.clone(),
                 command_receiver,
                 message_sender,
@@ -98,10 +113,25 @@ impl Node {
         ))
     }
 
-    pub async fn run(mut self, laddr: &String) -> Result<(), Box<dyn Error>> {
-        let addr = laddr.parse::<SocketAddrV4>()?;
-        self.swarm
-            .listen_on(format!("/ip4/{}/tcp/{}", addr.ip().to_string(), addr.port()).parse()?)?;
+    pub async fn run(
+        mut self,
+        tcp_laddr: &String,
+        ws_laddr: &String,
+    ) -> Result<(), Box<dyn Error>> {
+        let tcp_addr = tcp_laddr.parse::<SocketAddrV4>()?;
+        self.swarm.listen_on(
+            format!("/ip4/{}/tcp/{}", tcp_addr.ip().to_string(), tcp_addr.port()).parse()?,
+        )?;
+
+        let ws_addr = ws_laddr.parse::<SocketAddrV4>()?;
+        self.swarm.listen_on(
+            format!(
+                "/ip4/{}/tcp/{}/ws",
+                ws_addr.ip().to_string(),
+                ws_addr.port()
+            )
+            .parse()?,
+        )?;
 
         loop {
             select! {
@@ -131,14 +161,31 @@ impl Node {
                     self.handle_peer_expired(peer_id);
                 }
             }
+            SwarmEvent::ConnectionEstablished { peer_id, .. } => {
+                //TODO: don't need to merge with handle_peer_discovered() ?
+                self.swarm
+                    .behaviour_mut()
+                    .floodsub
+                    .add_node_to_partial_view(peer_id);
+            }
+            SwarmEvent::ConnectionClosed { peer_id, .. } => {
+                //TODO: don't need to merge with handle_peer_expired() ?
+                self.swarm
+                    .behaviour_mut()
+                    .floodsub
+                    .remove_node_from_partial_view(&peer_id);
+            }
             SwarmEvent::Behaviour(JiriBehaviourEvent::Gossipsub(gossipsub::Event::Message {
                 propagation_source,
-                message_id,
                 message,
+                ..
             })) => {
-                self.handle_message(propagation_source, message_id, message)
+                self.handle_message(propagation_source, message.data)
                     .await?
             }
+            SwarmEvent::Behaviour(JiriBehaviourEvent::Floodsub(FloodsubEvent::Message(
+                message,
+            ))) => self.handle_message(message.source, message.data).await?,
             SwarmEvent::Behaviour(JiriBehaviourEvent::Kademlia(
                 KademliaEvent::OutboundQueryProgressed {
                     id,
@@ -190,6 +237,10 @@ impl Node {
             .behaviour_mut()
             .kademlia
             .add_address(&peer_id, peer_addr);
+        self.swarm
+            .behaviour_mut()
+            .floodsub
+            .add_node_to_partial_view(peer_id);
     }
 
     fn handle_peer_expired(&mut self, peer_id: PeerId) {
@@ -199,19 +250,19 @@ impl Node {
             .gossipsub
             .remove_explicit_peer(&peer_id);
         self.swarm.behaviour_mut().kademlia.remove_peer(&peer_id);
+        self.swarm
+            .behaviour_mut()
+            .floodsub
+            .remove_node_from_partial_view(&peer_id);
     }
 
     async fn handle_message(
         &mut self,
         propagation_source: PeerId,
-        message_id: MessageId,
-        message: Message,
+        message_data: Vec<u8>,
     ) -> Result<(), Box<dyn Error>> {
-        let msg = serde_json::from_slice(&message.data)?;
-        log::info!(
-            "Got message: {:?} with ID:{message_id} from peer:{propagation_source}",
-            msg
-        );
+        let msg = serde_json::from_slice(&message_data)?;
+        log::info!("Got message: {:?} from peer:{propagation_source}", msg);
 
         match msg {
             message::Message::Text(_) => self.message_sender.send(msg).await?,

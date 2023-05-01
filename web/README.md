@@ -1,0 +1,4 @@
+```
+trunk build
+trunk serve
+```
