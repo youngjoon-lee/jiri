@@ -23,9 +23,6 @@ jobs:
 
     runs-on: ubuntu-latest
 
-    env:
-      working-directory: ./standalone
-
     permissions:
       contents: read
       packages: write
@@ -61,9 +58,9 @@ jobs:
       - name: Build and push Docker image
         id: build-and-push
         uses: docker/build-push-action@v4.0.0
-        working-directory: ${{ env.working-directory }}
         with:
-          context: .
+          file: ./standalone/Dockerfile
+          context: ./standalone
           build-args: BUILD_MODE=release
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
