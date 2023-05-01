@@ -7,62 +7,34 @@ use std::{
 };
 
 use libp2p::{
+    floodsub::{self, Floodsub},
     gossipsub, identity,
-    kad::{store::MemoryStore, Kademlia, KademliaEvent},
+    kad::{store::MemoryStore, Kademlia},
     mdns,
     request_response::{self, ProtocolSupport},
-    swarm::NetworkBehaviour,
+    swarm::{keep_alive, NetworkBehaviour},
     PeerId,
 };
 
-use super::file_exchange::{FileExchangeCodec, FileExchangeProtocol, FileRequest, FileResponse};
+use super::file_exchange::{FileExchangeCodec, FileExchangeProtocol};
 
 #[derive(NetworkBehaviour)]
-#[behaviour(out_event = "JiriBehaviourEvent")]
 pub struct JiriBehaviour {
     pub gossipsub: gossipsub::Behaviour,
+    pub floodsub: Floodsub,
+    //TODO: Understand what keep_alive actually is: https://github.com/libp2p/rust-libp2p/blob/3c5940aeadb9ed8527b6f7aa158797359085293d/examples/ping-example/src/main.rs#L86
+    pub keep_alive: keep_alive::Behaviour,
     pub mdns: mdns::async_io::Behaviour,
     pub kademlia: Kademlia<MemoryStore>,
     pub request_response: request_response::Behaviour<FileExchangeCodec>,
-}
-
-#[derive(Debug)]
-pub enum JiriBehaviourEvent {
-    Gossipsub(gossipsub::Event),
-    Mdns(mdns::Event),
-    Kademlia(KademliaEvent),
-    RequestResponse(request_response::Event<FileRequest, FileResponse>),
-}
-
-impl From<gossipsub::Event> for JiriBehaviourEvent {
-    fn from(event: gossipsub::Event) -> Self {
-        JiriBehaviourEvent::Gossipsub(event)
-    }
-}
-
-impl From<mdns::Event> for JiriBehaviourEvent {
-    fn from(event: mdns::Event) -> Self {
-        JiriBehaviourEvent::Mdns(event)
-    }
-}
-
-impl From<KademliaEvent> for JiriBehaviourEvent {
-    fn from(event: KademliaEvent) -> Self {
-        JiriBehaviourEvent::Kademlia(event)
-    }
-}
-
-impl From<request_response::Event<FileRequest, FileResponse>> for JiriBehaviourEvent {
-    fn from(event: request_response::Event<FileRequest, FileResponse>) -> Self {
-        JiriBehaviourEvent::RequestResponse(event)
-    }
 }
 
 impl JiriBehaviour {
     pub fn new(
         id_keys: identity::Keypair,
         peer_id: PeerId,
-        topic: &gossipsub::IdentTopic,
+        gossipsub_topic: &gossipsub::IdentTopic,
+        floodsub_topic: floodsub::Topic,
     ) -> Result<Self, Box<dyn Error>> {
         let message_id_fn = |message: &gossipsub::Message| {
             let mut hasher = DefaultHasher::new();
@@ -77,7 +49,12 @@ impl JiriBehaviour {
                 .message_id_fn(message_id_fn)
                 .build()?,
         )?;
-        gossipsub.subscribe(topic)?;
+        gossipsub.subscribe(gossipsub_topic)?;
+
+        let mut floodsub = Floodsub::new(peer_id);
+        floodsub.subscribe(floodsub_topic);
+
+        let keep_alive = keep_alive::Behaviour::default();
 
         let mdns = mdns::async_io::Behaviour::new(mdns::Config::default(), peer_id)?;
 
@@ -91,6 +68,8 @@ impl JiriBehaviour {
 
         Ok(Self {
             gossipsub,
+            floodsub,
+            keep_alive,
             mdns,
             kademlia,
             request_response,

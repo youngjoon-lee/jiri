@@ -12,11 +12,13 @@ use crate::{api::Api, p2p::Node};
 #[command(author, version, about, long_about = None)]
 struct Args {
     // P2P listen addr
-    #[arg(short, long, default_value = "127.0.0.1:0")]
-    p2p_laddr: String,
+    #[arg(long, default_value = "127.0.0.1:0")]
+    p2p_tcp_laddr: String,
+    #[arg(long, default_value = "127.0.0.1:0")]
+    p2p_ws_laddr: String,
 
     // API port
-    #[arg(short, long, default_value = "127.0.0.1:0")]
+    #[arg(long, default_value = "127.0.0.1:0")]
     api_laddr: String,
 }
 
@@ -32,7 +34,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let mut api = Api::new(command_sender, message_receiver);
 
     select! {
-        _ = node.run(&args.p2p_laddr).fuse() => {
+        _ = node.run(&args.p2p_tcp_laddr, &args.p2p_ws_laddr).fuse() => {
             log::info!("p2p is done");
         },
         _ = api.run(&args.api_laddr).fuse() => {
