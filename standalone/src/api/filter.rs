@@ -1,18 +1,17 @@
 use futures::channel::mpsc;
+use jiri_core::p2p::{command, event};
 use warp::Filter;
-
-use crate::p2p::{command, message};
 
 use super::handler;
 
 pub fn all(
     command_sender: mpsc::UnboundedSender<command::Command>,
-    message_receiver: async_channel::Receiver<message::Message>,
+    event_rx: async_channel::Receiver<event::Event>,
 ) -> impl Filter<Extract = (impl warp::Reply,), Error = warp::Rejection> + Clone {
     send_message(command_sender.clone())
         .or(send_file(command_sender.clone()))
         .or(status())
-        .or(subscribe_messages(message_receiver.clone()))
+        .or(subscribe_messages(event_rx.clone()))
 }
 
 // POST /msg
@@ -41,13 +40,13 @@ pub fn send_file(
 
 // WS /msg
 pub fn subscribe_messages(
-    message_receiver: async_channel::Receiver<message::Message>,
+    event_rx: async_channel::Receiver<event::Event>,
 ) -> impl Filter<Extract = (impl warp::Reply,), Error = warp::Rejection> + Clone {
     warp::ws()
         .and(warp::path!("msg"))
-        .and(warp::any().map(move || message_receiver.clone()))
-        .map(|ws: warp::ws::Ws, message_receiver| {
-            ws.on_upgrade(move |socket| handler::subscribe_messages(socket, message_receiver))
+        .and(warp::any().map(move || event_rx.clone()))
+        .map(|ws: warp::ws::Ws, event_rx| {
+            ws.on_upgrade(move |socket| handler::subscribe_messages(socket, event_rx))
         })
 }
 

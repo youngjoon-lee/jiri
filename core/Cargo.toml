@@ -1,0 +1,22 @@
+[package]
+name = "jiri-core"
+version = "0.0.1"
+edition = "2021"
+
+[features]
+default = ["libp2p/dns", "libp2p/mdns", "libp2p/kad", "libp2p/tcp", "libp2p/websocket", "libp2p/floodsub", "libp2p/gossipsub", "libp2p/tokio"]
+web = ["dep:libp2p-websys-transport", "libp2p/wasm-bindgen"]
+
+[dependencies]
+async-channel = "1.8.0"
+async-trait = "0.1"
+bytes = "1.4.0"
+env_logger = "0.10"
+futures = "0.3.28"
+libp2p = { version = "0.51.3", default-features = false, features = ["noise", "macros", "yamux", "floodsub", "request-response"] }
+libp2p-websys-transport = { version = "0.1.5", optional = true }
+log = "0.4.17"
+multiaddr = { version = "0.17.1" }
+serde = { version = "1.0.160", features = ["derive"] }
+serde_derive = "1.0.160"
+serde_json = "1.0.96"

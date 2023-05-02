@@ -1,12 +1,10 @@
 mod api;
-mod p2p;
 
 use std::error::Error;
 
 use clap::Parser;
 use futures::{select, FutureExt};
-
-use crate::{api::Api, p2p::Node};
+use jiri_core::p2p;
 
 #[derive(Debug, Parser)]
 #[command(author, version, about, long_about = None)]
@@ -28,13 +26,13 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let args = Args::parse();
 
-    log::info!("Initializing JIRI node...");
+    log::info!("Initializing JIRI standalone node...");
 
-    let (node, command_sender, message_receiver) = Node::new()?;
-    let mut api = Api::new(command_sender, message_receiver);
+    let (core, command_sender, event_rx) = p2p::Core::new()?;
+    let mut api = api::Api::new(command_sender, event_rx);
 
     select! {
-        _ = node.run(&args.p2p_tcp_laddr, &args.p2p_ws_laddr).fuse() => {
+        _ = core.run(&args.p2p_tcp_laddr, &args.p2p_ws_laddr).fuse() => {
             log::info!("p2p is done");
         },
         _ = api.run(&args.api_laddr).fuse() => {

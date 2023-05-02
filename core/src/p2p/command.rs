@@ -1,10 +1,12 @@
 use futures::channel::oneshot;
 use libp2p::{request_response::ResponseChannel, PeerId};
+use multiaddr::Multiaddr;
 
 use super::{file_exchange::FileResponse, message::Message};
 
 #[derive(Debug)]
 pub enum Command {
+    Dial(Multiaddr),
     SendMessage(Message),
     StartFileProviding {
         file_name: String,

@@ -9,26 +9,60 @@ on:
 env:
   CARGO_TERM_COLOR: always
 
-defaults:
-  run:
-    working-directory: ./standalone
-
 jobs:
-  build:
-
+  build-core-standalone:
     runs-on: ubuntu-latest
-
+    defaults:
+      run:
+        working-directory: ./core
     steps:
     - uses: actions/checkout@v3
-
     - name: Build
       run: cargo build --verbose
+    - name: Run unit tests
+      run: cargo test --lib --verbose
 
+  build-core-web:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./core
+    steps:
+    - uses: actions/checkout@v3
+    - name: Build
+      run: cargo build --no-default-features --features web --verbose
+    - name: Run unit tests
+      run: cargo test --lib --no-default-features --features web --verbose
+
+  build-bin-standalone:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./standalone
+    steps:
+    - uses: actions/checkout@v3
+    - name: Build
+      run: cargo build --verbose
     - name: Run unit tests
       run: cargo test --bins --verbose
-
     - name: Build docker image for integration tests
+      working-directory: .
       run: docker build --build-arg BUILD_MODE=debug -t jiri-debug .
-
     - name: Run integration tests
       run: cargo test --test "*" --verbose
+
+  build-bin-web:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./web
+    steps:
+    - uses: actions/checkout@v3
+    - name: Download 'wasm32-unknown-unknown' target
+      run: rustup target add wasm32-unknown-unknown
+    - name: Install Trunk
+      run: wget -qO- https://github.com/thedodd/trunk/releases/download/v0.16.0/trunk-x86_64-unknown-linux-gnu.tar.gz | tar -xzf- -C /usr/local/bin
+    - name: Build
+      run: trunk build
+
+    

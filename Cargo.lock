@@ -980,16 +980,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "console_error_panic_hook"
-version = "0.1.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a06aeb73f470f66dcdbf7223caeebb85984942f22f1adb2a088cf9668146bbbc"
-dependencies = [
- "cfg-if",
- "wasm-bindgen",
-]
-
-[[package]]
 name = "const-oid"
 version = "0.9.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2460,19 +2450,35 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "453ad9f582a441959e5f0d088b02ce04cfe8d51a8eaf077f12ac6d3e94164ca6"
 
 [[package]]
-name = "jiri"
+name = "jiri-core"
 version = "0.0.1"
 dependencies = [
  "async-channel",
  "async-trait",
  "bytes",
+ "env_logger",
+ "futures",
+ "libp2p",
+ "libp2p-websys-transport",
+ "log",
+ "multiaddr",
+ "serde",
+ "serde_derive",
+ "serde_json",
+]
+
+[[package]]
+name = "jiri-standalone"
+version = "0.0.1"
+dependencies = [
+ "async-channel",
+ "bytes",
  "clap",
  "dockertest",
  "env_logger",
  "futures",
- "libp2p",
+ "jiri-core",
  "log",
- "multiaddr",
  "serde",
  "serde_derive",
  "serde_json",
@@ -2485,14 +2491,11 @@ name = "jiri-web"
 version = "0.0.1"
 dependencies = [
  "async-channel",
- "console_error_panic_hook",
  "eframe",
  "egui",
  "futures",
- "libp2p",
- "libp2p-websys-transport",
- "serde",
- "serde_json",
+ "jiri-core",
+ "multiaddr",
  "wasm-bindgen",
  "wasm-bindgen-futures",
 ]

@@ -6,28 +6,28 @@ use std::{error::Error, net::SocketAddrV4};
 use futures::channel::mpsc;
 use serde_derive::{Deserialize, Serialize};
 
-use crate::p2p::{command, message};
+use jiri_core::p2p::{command, event};
 
 #[derive(Debug)]
 pub struct Api {
     command_sender: mpsc::UnboundedSender<command::Command>,
-    message_receiver: async_channel::Receiver<message::Message>,
+    event_rx: async_channel::Receiver<event::Event>,
 }
 
 impl Api {
     pub fn new(
         command_sender: mpsc::UnboundedSender<command::Command>,
-        message_receiver: async_channel::Receiver<message::Message>,
+        event_rx: async_channel::Receiver<event::Event>,
     ) -> Self {
         Api {
             command_sender,
-            message_receiver,
+            event_rx,
         }
     }
 
     pub async fn run(&mut self, laddr: &String) -> Result<(), Box<dyn Error>> {
         let addr = laddr.parse::<SocketAddrV4>()?;
-        let routes = filter::all(self.command_sender.clone(), self.message_receiver.clone());
+        let routes = filter::all(self.command_sender.clone(), self.event_rx.clone());
         let (_, fut) = warp::serve(routes).bind_with_graceful_shutdown(
             (addr.ip().octets(), addr.port()),
             async move {

@@ -6,7 +6,7 @@ use futures::{
 };
 use warp::{hyper::StatusCode, ws};
 
-use crate::p2p::{command, message};
+use jiri_core::p2p::{command, event, message};
 
 use super::Status;
 
@@ -63,25 +63,28 @@ pub async fn send_file(
 
 pub async fn subscribe_messages(
     ws: ws::WebSocket,
-    message_receiver: async_channel::Receiver<message::Message>,
+    event_rx: async_channel::Receiver<event::Event>,
 ) {
     let (mut sender, ..) = ws.split();
 
-    while let Ok(msg) = message_receiver.recv().await {
-        match msg {
-            message::Message::Text(text) => {
-                if let Err(e) = sender.send(ws::Message::text(text)).await {
-                    log::error!("Failed to send text message to WebSocket: {e:?}");
+    while let Ok(event) = event_rx.recv().await {
+        match event {
+            event::Event::Msg(msg) => match msg {
+                message::Message::Text(text) => {
+                    if let Err(e) = sender.send(ws::Message::text(text)).await {
+                        log::error!("Failed to send text message to WebSocket: {e:?}");
+                    }
                 }
-            }
-            message::Message::File { file, .. } => {
-                if let Err(e) = sender.send(ws::Message::binary(file)).await {
-                    log::error!("Failed to send file message to WebSocket: {e:?}");
+                message::Message::File { file, .. } => {
+                    if let Err(e) = sender.send(ws::Message::binary(file)).await {
+                        log::error!("Failed to send file message to WebSocket: {e:?}");
+                    }
                 }
-            }
-            _ => {
-                log::error!("Not implemented yet for {:?}", msg);
-            }
+                _ => {
+                    log::error!("Not implemented yet for {:?}", msg);
+                }
+            },
+            _ => {}
         }
     }
 }

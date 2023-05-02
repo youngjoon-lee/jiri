@@ -4,6 +4,8 @@ ARG BUILD_MODE=debug
 
 WORKDIR /usr/src/jiri
 COPY . .
+
+WORKDIR /usr/src/jiri/standalone
 RUN if [ "$BUILD_MODE" = "release" ]; then cargo build --release; else cargo build; fi
 
 ########################################
@@ -14,7 +16,7 @@ ARG BUILD_MODE=debug
 
 WORKDIR /usr/local/bin
 
-COPY --from=builder /usr/src/jiri/target/$BUILD_MODE/jiri .
+COPY --from=builder /usr/src/jiri/target/$BUILD_MODE/jiri-standalone .
 
-CMD ["./jiri"]
+CMD ["./jiri-standalone"]
 
