@@ -4,7 +4,7 @@ version = "0.0.1"
 edition = "2021"
 
 [features]
-standalone = ["libp2p/dns", "libp2p/mdns", "libp2p/kad", "libp2p/tcp", "libp2p/websocket", "libp2p/floodsub", "libp2p/gossipsub", "libp2p/tokio"]
+default = ["libp2p/dns", "libp2p/mdns", "libp2p/kad", "libp2p/tcp", "libp2p/websocket", "libp2p/floodsub", "libp2p/gossipsub", "libp2p/tokio"]
 web = ["dep:libp2p-websys-transport", "libp2p/wasm-bindgen"]
 
 [dependencies]

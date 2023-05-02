@@ -10,6 +10,6 @@ egui = "0.21.0"
 wasm-bindgen = "0.2.83"
 wasm-bindgen-futures = "0.4.34"
 async-channel = "1.8.0"
-jiri-core = { path = "../core", features = ["web"] }
+jiri-core = { path = "../core", default-features = false, features = ["web"] }
 multiaddr = "0.17.1"
 futures = "0.3.28"

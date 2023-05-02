@@ -15,7 +15,7 @@ async-channel = "1.8.0"
 serde = { version = "1.0.160", features = ["derive"] }
 serde_derive = "1.0.160"
 serde_json = "1.0.96"
-jiri-core = { path = "../core", features = ["standalone"] }
+jiri-core = { path = "../core" }
 
 [dev-dependencies]
 dockertest = "0.3.1"
