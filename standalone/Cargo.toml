@@ -7,13 +7,12 @@ edition = "2021"
 
 [dependencies]
 async-channel = "1.8.0"
-async-std = { version = "1.12", features = ["attributes"] }
 async-trait = "0.1"
 bytes = "1.4.0"
 clap = { version = "4.2.1", features = ["derive"] }
 env_logger = "0.10"
 futures = "0.3.28"
-libp2p = { version = "0.51.3", features = ["async-std", "dns", "mdns", "kad", "noise", "macros", "request-response", "tcp", "websocket", "yamux", "gossipsub", "floodsub"] }
+libp2p = { version = "0.51.3", features = ["dns", "mdns", "kad", "noise", "macros", "request-response", "tcp", "websocket", "yamux", "gossipsub", "floodsub", "tokio"] }
 log = "0.4.17"
 multiaddr = { version = "0.17.1" }
 serde = { version = "1.0.160", features = ["derive"] }
