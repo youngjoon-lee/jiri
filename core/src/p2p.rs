@@ -48,8 +48,8 @@ use self::file_exchange::{FileRequest, FileResponse};
 pub struct Core {
     swarm: Swarm<JiriBehaviour>,
     floodsub_topic: floodsub::Topic,
-    command_sender: mpsc::UnboundedSender<command::Command>,
-    command_receiver: mpsc::UnboundedReceiver<command::Command>,
+    command_tx: mpsc::UnboundedSender<command::Command>,
+    command_rx: mpsc::UnboundedReceiver<command::Command>,
     event_tx: async_channel::Sender<Event>,
     pending_request_file: HashMap<String, HashSet<RequestId>>,
 
@@ -107,7 +107,7 @@ impl Core {
         )
         .build();
 
-        let (command_sender, command_receiver) = mpsc::unbounded();
+        let (command_tx, command_rx) = mpsc::unbounded();
         let (event_tx, event_rx) = async_channel::unbounded();
 
         #[cfg(not(feature = "web"))]
@@ -123,8 +123,8 @@ impl Core {
             Core {
                 swarm,
                 floodsub_topic,
-                command_sender: command_sender.clone(),
-                command_receiver,
+                command_tx: command_tx.clone(),
+                command_rx,
                 event_tx,
                 pending_request_file: Default::default(),
 
@@ -137,7 +137,7 @@ impl Core {
                 #[cfg(not(feature = "web"))]
                 tmp_dir,
             },
-            command_sender.clone(),
+            command_tx.clone(),
             event_rx,
         ))
     }
@@ -174,7 +174,7 @@ impl Core {
     async fn start_loop(mut self) -> Result<(), Box<dyn Error>> {
         loop {
             select! {
-                command = self.command_receiver.select_next_some() => {
+                command = self.command_rx.select_next_some() => {
                     self.handle_command(command)?
                 },
                 event = self.swarm.select_next_some() => {
@@ -321,7 +321,7 @@ impl Core {
             }
             #[cfg(not(feature = "web"))]
             message::Message::FileAd(file_name) => {
-                self.command_sender
+                self.command_tx
                     .send(command::Command::GetFileProviders { file_name })
                     .await?;
             }
@@ -365,10 +365,10 @@ impl Core {
         let file_name = String::from_utf8(key)?;
 
         let requests = providers.into_iter().map(|peer| {
-            let mut command_sender = self.command_sender.clone();
+            let mut command_tx = self.command_tx.clone();
             let file_name = file_name.clone();
             async move {
-                command_sender
+                command_tx
                     .send(command::Command::RequestFile { file_name, peer })
                     .await
             }
@@ -390,7 +390,7 @@ impl Core {
         channel: ResponseChannel<FileResponse>,
     ) -> Result<(), Box<dyn Error>> {
         let file: Vec<u8> = std::fs::read(&self.tmp_dir.join(request.0.clone()))?;
-        self.command_sender
+        self.command_tx
             .feed(command::Command::ResponseFile {
                 file_name: request.0,
                 file,
