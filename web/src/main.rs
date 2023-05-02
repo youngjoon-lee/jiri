@@ -4,7 +4,6 @@ use egui::{Color32, RichText};
 use futures::{channel::mpsc, SinkExt};
 use jiri_core::p2p::{self, command, event, message};
 use multiaddr::Multiaddr;
-use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::spawn_local;
 
 // Debugging console log.

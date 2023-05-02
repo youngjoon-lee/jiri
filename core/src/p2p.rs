@@ -5,11 +5,39 @@ mod file_exchange;
 pub mod message;
 mod transport;
 
-use futures::io;
+use crate::p2p::{
+    behaviour::{JiriBehaviour, JiriBehaviourEvent},
+    event::Event,
+    message::Message,
+};
+use futures::{channel::mpsc, select, StreamExt};
+use libp2p::{
+    floodsub::{self, FloodsubEvent},
+    identity,
+    request_response::RequestId,
+    swarm::{SwarmBuilder, SwarmEvent},
+    PeerId, Swarm,
+};
 use std::{
     collections::{HashMap, HashSet},
-    env,
     error::Error,
+};
+
+#[cfg(not(feature = "web"))]
+use crate::p2p::file_exchange::{FileRequest, FileResponse};
+#[cfg(not(feature = "web"))]
+use futures::{channel::oneshot, io, FutureExt, SinkExt};
+#[cfg(not(feature = "web"))]
+use libp2p::{
+    gossipsub,
+    kad::{GetProvidersOk, KademliaEvent, QueryId, QueryResult},
+    mdns,
+    request_response::{self, ResponseChannel},
+    Multiaddr,
+};
+#[cfg(not(feature = "web"))]
+use std::{
+    env,
     fs::{self, File},
     io::Write,
     net::SocketAddrV4,
@@ -17,33 +45,6 @@ use std::{
     process,
     time::{SystemTime, UNIX_EPOCH},
 };
-
-use futures::{
-    channel::{mpsc, oneshot},
-    select, FutureExt, SinkExt, StreamExt,
-};
-use libp2p::{
-    floodsub::{self, Floodsub, FloodsubEvent},
-    identity,
-    request_response::{self, RequestId, ResponseChannel},
-    swarm::{SwarmBuilder, SwarmEvent},
-    Multiaddr, PeerId, Swarm,
-};
-
-#[cfg(not(feature = "web"))]
-use libp2p::{
-    gossipsub,
-    kad::{GetProvidersOk, KademliaEvent, QueryId, QueryResult},
-    mdns,
-};
-
-use crate::p2p::{
-    behaviour::{JiriBehaviour, JiriBehaviourEvent},
-    event::Event,
-    message::Message,
-};
-
-use self::file_exchange::{FileRequest, FileResponse};
 
 pub struct Core {
     swarm: Swarm<JiriBehaviour>,
@@ -77,19 +78,14 @@ impl Core {
         log::info!("Peer {peer_id} generated");
 
         let floodsub_topic = floodsub::Topic::new("jiri-chat-floodsub");
-
         #[cfg(not(feature = "web"))]
         let gossipsub_topic = gossipsub::IdentTopic::new("jiri-chat");
-        #[cfg(not(feature = "web"))]
-        let behaviour = JiriBehaviour::new(
-            id_keys.clone(),
-            peer_id,
-            floodsub_topic.clone(),
-            &gossipsub_topic,
-        )?;
 
+        #[cfg(not(feature = "web"))]
+        let behaviour =
+            JiriBehaviour::new(id_keys.clone(), floodsub_topic.clone(), &gossipsub_topic)?;
         #[cfg(feature = "web")]
-        let behaviour = JiriBehaviour::new(id_keys.clone(), peer_id, floodsub_topic.clone())?;
+        let behaviour = JiriBehaviour::new(id_keys.clone(), floodsub_topic.clone())?;
 
         #[cfg(not(feature = "web"))]
         let swarm = SwarmBuilder::with_tokio_executor(
@@ -110,15 +106,6 @@ impl Core {
         let (command_tx, command_rx) = mpsc::unbounded();
         let (event_tx, event_rx) = async_channel::unbounded();
 
-        #[cfg(not(feature = "web"))]
-        let tmp_dir = env::temp_dir().join(format!(
-            "jiri.{}.{}",
-            process::id(),
-            SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
-        ));
-        #[cfg(not(feature = "web"))]
-        fs::create_dir(&tmp_dir)?;
-
         Ok((
             Core {
                 swarm,
@@ -135,7 +122,7 @@ impl Core {
                 #[cfg(not(feature = "web"))]
                 gossipsub_topic,
                 #[cfg(not(feature = "web"))]
-                tmp_dir,
+                tmp_dir: Core::create_tmp_dir()?,
             },
             command_tx.clone(),
             event_rx,
@@ -459,10 +446,12 @@ impl Core {
                     .behaviour_mut()
                     .floodsub
                     .publish(self.floodsub_topic.clone(), serde_json::to_vec(&msg)?);
+
+                log::trace!("self.floodsub_topic: {:?}", self.floodsub_topic);
             }
             _ => {
                 #[cfg(not(feature = "web"))]
-                self.handle_standalone_command(command);
+                self.handle_standalone_command(command)?;
             }
         };
 
@@ -530,6 +519,17 @@ impl Core {
         }
 
         Ok(())
+    }
+
+    #[cfg(not(feature = "web"))]
+    fn create_tmp_dir() -> Result<PathBuf, Box<dyn Error>> {
+        let tmp_dir = env::temp_dir().join(format!(
+            "jiri.{}.{}",
+            process::id(),
+            SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
+        ));
+        fs::create_dir(&tmp_dir)?;
+        Ok(tmp_dir)
     }
 
     #[cfg(not(feature = "web"))]

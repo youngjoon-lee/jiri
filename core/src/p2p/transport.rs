@@ -1,22 +1,16 @@
-use futures::future::Either;
 use libp2p::core::{muxing::StreamMuxerBox, transport::Boxed};
 use libp2p::identity::Keypair;
 use libp2p::PeerId;
-use libp2p::{
-    core::{transport::OrTransport, upgrade::Version},
-    noise, yamux, Transport,
-};
-#[cfg(not(feature = "web"))]
-use libp2p::{tcp, websocket};
-#[cfg(feature = "web")]
-use libp2p_websys_transport::WebsocketTransport;
-
+use libp2p::{core::upgrade::Version, noise, yamux, Transport};
 use std::error::Error;
 
 #[cfg(not(feature = "web"))]
 pub fn create_transport(
     id_keys: &Keypair,
 ) -> Result<Boxed<(PeerId, StreamMuxerBox)>, Box<dyn Error>> {
+    use futures::future::Either;
+    use libp2p::{core::transport::OrTransport, tcp, websocket};
+
     let tcp_transport = tcp::tokio::Transport::default()
         .upgrade(Version::V1Lazy)
         .authenticate(noise::NoiseAuthenticated::xx(&id_keys)?)
@@ -41,6 +35,8 @@ pub fn create_transport(
 pub fn create_transport(
     id_keys: &Keypair,
 ) -> Result<Boxed<(PeerId, StreamMuxerBox)>, Box<dyn Error>> {
+    use libp2p_websys_transport::WebsocketTransport;
+
     let transport = WebsocketTransport::default()
         .upgrade(Version::V1Lazy)
         .authenticate(noise::NoiseAuthenticated::xx(&id_keys).unwrap())
