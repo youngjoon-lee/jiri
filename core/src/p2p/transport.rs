@@ -18,7 +18,7 @@ pub fn create_transport(
     id_keys: &Keypair,
 ) -> Result<Boxed<(PeerId, StreamMuxerBox)>, Box<dyn Error>> {
     let tcp_transport = tcp::tokio::Transport::default()
-        .upgrade(Version::V1Lazy)
+        .upgrade(Version::V1)
         .authenticate(noise::NoiseAuthenticated::xx(&id_keys)?)
         .multiplex(yamux::YamuxConfig::default())
         .boxed();
@@ -42,7 +42,7 @@ pub fn create_transport(
     id_keys: &Keypair,
 ) -> Result<Boxed<(PeerId, StreamMuxerBox)>, Box<dyn Error>> {
     let transport = WebsocketTransport::default()
-        .upgrade(Version::V1Lazy)
+        .upgrade(Version::V1)
         .authenticate(noise::NoiseAuthenticated::xx(&id_keys).unwrap())
         .multiplex(yamux::YamuxConfig::default())
         .boxed();
