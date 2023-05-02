@@ -9,11 +9,15 @@ use std::{
 use libp2p::{
     floodsub::{self, Floodsub},
     identity,
-    kad::{store::MemoryStore, Kademlia},
-    mdns,
     request_response::{self, ProtocolSupport},
     swarm::NetworkBehaviour,
     PeerId,
+};
+
+#[cfg(not(feature = "web"))]
+use libp2p::{
+    kad::{store::MemoryStore, Kademlia},
+    mdns,
 };
 
 #[cfg(not(feature = "web"))]
@@ -33,8 +37,11 @@ pub struct JiriBehaviour {
 
     #[cfg(not(feature = "web"))]
     pub gossipsub: gossipsub::Behaviour,
+    #[cfg(not(feature = "web"))]
     pub mdns: mdns::tokio::Behaviour,
+    #[cfg(not(feature = "web"))]
     pub kademlia: Kademlia<MemoryStore>,
+    #[cfg(not(feature = "web"))]
     pub request_response: request_response::Behaviour<FileExchangeCodec>,
 }
 
@@ -64,8 +71,14 @@ impl JiriBehaviour {
                     })
                     .build()?,
             )?,
+
+            #[cfg(not(feature = "web"))]
             mdns: mdns::tokio::Behaviour::new(mdns::Config::default(), peer_id)?,
+
+            #[cfg(not(feature = "web"))]
             kademlia: Kademlia::new(peer_id, MemoryStore::new(peer_id)),
+
+            #[cfg(not(feature = "web"))]
             request_response: request_response::Behaviour::new(
                 FileExchangeCodec(),
                 iter::once((FileExchangeProtocol(), ProtocolSupport::Full)),

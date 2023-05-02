@@ -1,9 +1,11 @@
 mod behaviour;
 pub mod command;
+pub mod event;
 mod file_exchange;
 pub mod message;
 mod transport;
 
+use futures::io;
 use std::{
     collections::{HashMap, HashSet},
     env,
@@ -21,35 +23,43 @@ use futures::{
     select, FutureExt, SinkExt, StreamExt,
 };
 use libp2p::{
-    floodsub::{self, FloodsubEvent},
+    floodsub::{self, Floodsub, FloodsubEvent},
     identity,
-    kad::{GetProvidersOk, KademliaEvent, QueryId, QueryResult},
-    mdns,
     request_response::{self, RequestId, ResponseChannel},
-    swarm::{SwarmBuilder, SwarmEvent},
+    swarm::{keep_alive, SwarmBuilder, SwarmEvent},
     Multiaddr, PeerId, Swarm,
 };
 
 #[cfg(not(feature = "web"))]
-use libp2p::gossipsub;
+use libp2p::{
+    gossipsub,
+    kad::{GetProvidersOk, KademliaEvent, QueryId, QueryResult},
+    mdns,
+};
 
-use tokio::io;
-
-use crate::p2p::behaviour::{JiriBehaviour, JiriBehaviourEvent};
+use crate::p2p::{
+    behaviour::{JiriBehaviour, JiriBehaviourEvent},
+    event::Event,
+    message::Message,
+};
 
 use self::file_exchange::{FileRequest, FileResponse};
 
 pub struct Core {
     swarm: Swarm<JiriBehaviour>,
+    floodsub_topic: floodsub::Topic,
     command_sender: mpsc::UnboundedSender<command::Command>,
     command_receiver: mpsc::UnboundedReceiver<command::Command>,
-    message_sender: async_channel::Sender<message::Message>,
-    pending_start_providing: HashMap<QueryId, oneshot::Sender<()>>,
-    pending_get_providers: HashSet<QueryId>,
+    event_tx: async_channel::Sender<Event>,
     pending_request_file: HashMap<String, HashSet<RequestId>>,
 
     #[cfg(not(feature = "web"))]
-    topic: gossipsub::IdentTopic,
+    pending_start_providing: HashMap<QueryId, oneshot::Sender<()>>,
+    #[cfg(not(feature = "web"))]
+    pending_get_providers: HashSet<QueryId>,
+    #[cfg(not(feature = "web"))]
+    gossipsub_topic: gossipsub::IdentTopic,
+    #[cfg(not(feature = "web"))]
     tmp_dir: PathBuf,
 }
 
@@ -58,7 +68,7 @@ impl Core {
         (
             Self,
             mpsc::UnboundedSender<command::Command>,
-            async_channel::Receiver<message::Message>,
+            async_channel::Receiver<Event>,
         ),
         Box<dyn Error>,
     > {
@@ -70,11 +80,16 @@ impl Core {
 
         #[cfg(not(feature = "web"))]
         let gossipsub_topic = gossipsub::IdentTopic::new("jiri-chat");
-        let behaviour =
-            JiriBehaviour::new(id_keys.clone(), peer_id, floodsub_topic, &gossipsub_topic)?;
+        #[cfg(not(feature = "web"))]
+        let behaviour = JiriBehaviour::new(
+            id_keys.clone(),
+            peer_id,
+            floodsub_topic.clone(),
+            &gossipsub_topic,
+        )?;
 
         #[cfg(feature = "web")]
-        let behaviour = JiriBehaviour::new(id_keys.clone(), peer_id, floodsub_topic)?;
+        let behaviour = JiriBehaviour::new(id_keys.clone(), peer_id, floodsub_topic.clone())?;
 
         #[cfg(not(feature = "web"))]
         let swarm = SwarmBuilder::with_tokio_executor(
@@ -84,10 +99,16 @@ impl Core {
         )
         .build();
 
-        //TODO: create swarm for web
+        #[cfg(feature = "web")]
+        let swarm = SwarmBuilder::with_wasm_executor(
+            transport::create_transport(&id_keys)?,
+            behaviour,
+            peer_id,
+        )
+        .build();
 
         let (command_sender, command_receiver) = mpsc::unbounded();
-        let (message_sender, message_receiver) = async_channel::unbounded();
+        let (event_tx, event_rx) = async_channel::unbounded();
 
         #[cfg(not(feature = "web"))]
         let tmp_dir = env::temp_dir().join(format!(
@@ -95,24 +116,29 @@ impl Core {
             process::id(),
             SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
         ));
+        #[cfg(not(feature = "web"))]
         fs::create_dir(&tmp_dir)?;
 
         Ok((
             Core {
                 swarm,
+                floodsub_topic,
                 command_sender: command_sender.clone(),
                 command_receiver,
-                message_sender,
-                pending_start_providing: Default::default(),
-                pending_get_providers: Default::default(),
+                event_tx,
                 pending_request_file: Default::default(),
 
                 #[cfg(not(feature = "web"))]
+                pending_start_providing: Default::default(),
+                #[cfg(not(feature = "web"))]
+                pending_get_providers: Default::default(),
+                #[cfg(not(feature = "web"))]
+                gossipsub_topic,
+                #[cfg(not(feature = "web"))]
                 tmp_dir,
-                topic: gossipsub_topic,
             },
             command_sender.clone(),
-            message_receiver,
+            event_rx,
         ))
     }
 
@@ -137,6 +163,15 @@ impl Core {
             .parse()?,
         )?;
 
+        self.start_loop().await
+    }
+
+    #[cfg(feature = "web")]
+    pub async fn run(self) -> Result<(), Box<dyn Error>> {
+        self.start_loop().await
+    }
+
+    async fn start_loop(mut self) -> Result<(), Box<dyn Error>> {
         loop {
             select! {
                 command = self.command_receiver.select_next_some() => {
@@ -149,37 +184,43 @@ impl Core {
         }
     }
 
-    #[cfg(not(feature = "web"))]
     async fn handle_event<T>(
         &mut self,
         event: SwarmEvent<JiriBehaviourEvent, T>,
     ) -> Result<(), Box<dyn Error>> {
         match event {
             SwarmEvent::NewListenAddr { address, .. } => log::info!("Listening on {address:?}"),
+            #[cfg(not(feature = "web"))]
             SwarmEvent::Behaviour(JiriBehaviourEvent::Mdns(mdns::Event::Discovered(list))) => {
                 for (peer_id, peer_addr) in list {
                     self.handle_peer_discovered(peer_id, peer_addr);
                 }
             }
+            #[cfg(not(feature = "web"))]
             SwarmEvent::Behaviour(JiriBehaviourEvent::Mdns(mdns::Event::Expired(list))) => {
                 for (peer_id, _) in list {
                     self.handle_peer_expired(peer_id);
                 }
             }
             SwarmEvent::ConnectionEstablished { peer_id, .. } => {
-                //TODO: don't need to merge with handle_peer_discovered() ?
                 self.swarm
                     .behaviour_mut()
                     .floodsub
                     .add_node_to_partial_view(peer_id);
+                self.event_tx.send(Event::Connected(peer_id)).await?;
             }
             SwarmEvent::ConnectionClosed { peer_id, .. } => {
-                //TODO: don't need to merge with handle_peer_expired() ?
                 self.swarm
                     .behaviour_mut()
                     .floodsub
                     .remove_node_from_partial_view(&peer_id);
+                self.event_tx.send(Event::Disconnected(peer_id)).await?;
             }
+            SwarmEvent::OutgoingConnectionError { error, .. } => {
+                log::error!("OutgoingConnectionError: {error}");
+                self.event_tx.send(Event::Error(error.to_string())).await?;
+            }
+            #[cfg(not(feature = "web"))]
             SwarmEvent::Behaviour(JiriBehaviourEvent::Gossipsub(gossipsub::Event::Message {
                 propagation_source,
                 message,
@@ -191,6 +232,7 @@ impl Core {
             SwarmEvent::Behaviour(JiriBehaviourEvent::Floodsub(FloodsubEvent::Message(
                 message,
             ))) => self.handle_message(message.source, message.data).await?,
+            #[cfg(not(feature = "web"))]
             SwarmEvent::Behaviour(JiriBehaviourEvent::Kademlia(
                 KademliaEvent::OutboundQueryProgressed {
                     id,
@@ -200,6 +242,7 @@ impl Core {
             )) => {
                 self.handle_start_providing_progressed(id);
             }
+            #[cfg(not(feature = "web"))]
             SwarmEvent::Behaviour(JiriBehaviourEvent::Kademlia(
                 KademliaEvent::OutboundQueryProgressed {
                     id,
@@ -211,6 +254,7 @@ impl Core {
                 self.handle_get_providers_progressed(id, key.to_vec(), providers)
                     .await?
             }
+            #[cfg(not(feature = "web"))]
             SwarmEvent::Behaviour(JiriBehaviourEvent::RequestResponse(
                 request_response::Event::Message { message, .. },
             )) => match message {
@@ -263,7 +307,6 @@ impl Core {
             .remove_node_from_partial_view(&peer_id);
     }
 
-    #[cfg(not(feature = "web"))]
     async fn handle_message(
         &mut self,
         propagation_source: PeerId,
@@ -273,7 +316,10 @@ impl Core {
         log::info!("Got message: {:?} from peer:{propagation_source}", msg);
 
         match msg {
-            message::Message::Text(_) => self.message_sender.send(msg).await?,
+            message::Message::Text(text) => {
+                self.event_tx.send(Event::Msg(Message::Text(text))).await?
+            }
+            #[cfg(not(feature = "web"))]
             message::Message::FileAd(file_name) => {
                 self.command_sender
                     .send(command::Command::GetFileProviders { file_name })
@@ -364,68 +410,89 @@ impl Core {
         log::debug!("FileResponse received: request_id:{request_id}");
         if let Some(_) = self.pending_request_file.remove(&response.file_name) {
             log::info!("File {} received: {:?}", response.file_name, response.file);
-            self.message_sender
-                .send(message::Message::File {
+            self.event_tx
+                .send(Event::Msg(message::Message::File {
                     file_name: response.file_name,
                     file: response.file,
-                })
+                }))
                 .await?;
         }
 
         Ok(())
     }
 
-    #[cfg(not(feature = "web"))]
     fn handle_command(&mut self, command: command::Command) -> Result<(), Box<dyn Error>> {
         match command {
+            command::Command::Dial(addr) => {
+                if let Err(e) = self.swarm.dial(addr.clone()) {
+                    // let _ = event_tx.send(Event::Error(e.to_string())).await;
+                    log::error!("failed to dial to {addr:?}: {e}");
+                }
+            }
             command::Command::SendMessage(msg) => {
+                #[cfg(not(feature = "web"))]
                 if let Err(e) = self
                     .swarm
                     .behaviour_mut()
                     .gossipsub
-                    .publish(self.topic.clone(), serde_json::to_vec(&msg)?)
+                    .publish(self.gossipsub_topic.clone(), serde_json::to_vec(&msg)?)
                 {
                     log::error!("Failed to publish: {e:?}");
                 }
+
+                #[cfg(feature = "web")]
+                self.swarm
+                    .behaviour_mut()
+                    .floodsub
+                    .publish(self.floodsub_topic.clone(), serde_json::to_vec(&msg)?);
             }
             command::Command::StartFileProviding {
                 file_name,
                 file,
                 sender,
             } => {
-                if let Err(e) = self.create_tmp_file(file_name.clone(), file) {
-                    log::error!("failed to create tmp file: {e:?}");
-                    return Err(Box::from(e));
-                }
+                #[cfg(not(feature = "web"))]
+                {
+                    if let Err(e) = self.create_tmp_file(file_name.clone(), file) {
+                        log::error!("failed to create tmp file: {e:?}");
+                        return Err(Box::from(e));
+                    }
 
-                let query_id = self
-                    .swarm
-                    .behaviour_mut()
-                    .kademlia
-                    .start_providing(file_name.into_bytes().into())?;
-                self.pending_start_providing.insert(query_id, sender);
+                    let query_id = self
+                        .swarm
+                        .behaviour_mut()
+                        .kademlia
+                        .start_providing(file_name.into_bytes().into())?;
+                    self.pending_start_providing.insert(query_id, sender);
+                }
             }
             command::Command::GetFileProviders { file_name } => {
-                let query_id = self
-                    .swarm
-                    .behaviour_mut()
-                    .kademlia
-                    .get_providers(file_name.into_bytes().into());
-                self.pending_get_providers.insert(query_id);
+                #[cfg(not(feature = "web"))]
+                {
+                    let query_id = self
+                        .swarm
+                        .behaviour_mut()
+                        .kademlia
+                        .get_providers(file_name.into_bytes().into());
+                    self.pending_get_providers.insert(query_id);
+                }
             }
             command::Command::RequestFile { file_name, peer } => {
-                let request_id = self
-                    .swarm
-                    .behaviour_mut()
-                    .request_response
-                    .send_request(&peer, FileRequest(file_name.clone()));
+                #[cfg(not(feature = "web"))]
+                {
+                    let request_id = self
+                        .swarm
+                        .behaviour_mut()
+                        .request_response
+                        .send_request(&peer, FileRequest(file_name.clone()));
 
-                if let Some(request_ids) = self.pending_request_file.get_mut(&file_name) {
-                    request_ids.insert(request_id);
-                } else {
-                    let mut request_ids: HashSet<RequestId> = Default::default();
-                    request_ids.insert(request_id);
-                    self.pending_request_file.insert(file_name, request_ids);
+                    if let Some(request_ids) = self.pending_request_file.get_mut(&file_name) {
+                        request_ids.insert(request_id);
+                    } else {
+                        let mut request_ids: HashSet<RequestId> = Default::default();
+                        request_ids.insert(request_id);
+                        self.pending_request_file.insert(file_name, request_ids);
+                    }
                 }
             }
             command::Command::ResponseFile {
@@ -433,6 +500,7 @@ impl Core {
                 file,
                 channel,
             } => {
+                #[cfg(not(feature = "web"))]
                 self.swarm
                     .behaviour_mut()
                     .request_response
