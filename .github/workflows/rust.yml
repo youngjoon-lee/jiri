@@ -57,6 +57,8 @@ jobs:
         working-directory: ./web
     steps:
     - uses: actions/checkout@v3
+    - name: Download 'wasm32-unknown-unknown' target
+      run: rustup target add wasm32-unknown-unknown
     - name: Install Trunk
       run: cargo install --locked trunk
     - name: Build
