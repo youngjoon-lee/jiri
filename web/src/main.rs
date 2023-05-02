@@ -1,6 +1,7 @@
 use std::{collections::VecDeque, time::Duration};
 
 use egui::{Color32, RichText};
+use futures::{channel::mpsc, SinkExt};
 use jiri_core::p2p::{self, command, event, message};
 use multiaddr::Multiaddr;
 use wasm_bindgen::prelude::*;
@@ -35,7 +36,7 @@ fn main() {
 
 pub struct MainApp {
     event_rx: async_channel::Receiver<event::Event>,
-    command_tx: async_channel::Sender<command::Command>,
+    command_tx: mpsc::UnboundedSender<command::Command>,
     messages: VecDeque<(Color32, String)>,
     connected: bool,
     text: String,
@@ -45,10 +46,7 @@ impl MainApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         cc.egui_ctx.set_visuals(egui::Visuals::dark());
 
-        let (event_tx, event_rx) = async_channel::bounded(64);
-        let (command_tx, command_rx) = async_channel::bounded(64);
-
-        let (core, command_sender, message_receiver) = p2p::Core::new().unwrap();
+        let (core, command_tx, event_rx) = p2p::Core::new().unwrap();
         let run_core = || async move { core.run().await.unwrap() };
         spawn_local(run_core());
 
@@ -62,7 +60,7 @@ impl MainApp {
     }
 
     fn send_command(&self, command: command::Command) {
-        let tx = self.command_tx.clone();
+        let mut tx = self.command_tx.clone();
         spawn_local(async move {
             let _ = tx.send(command).await;
         });
