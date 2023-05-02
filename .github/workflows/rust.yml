@@ -45,10 +45,11 @@ jobs:
       run: cargo build --verbose
     - name: Run unit tests
       run: cargo test --bins --verbose
-    # - name: Build docker image for integration tests
-    #   run: docker build --build-arg BUILD_MODE=debug -t jiri-debug .
-    # - name: Run integration tests
-    #   run: cargo test --test "*" --verbose
+    - name: Build docker image for integration tests
+      working-directory: .
+      run: docker build --build-arg BUILD_MODE=debug -t jiri-debug .
+    - name: Run integration tests
+      run: cargo test --test "*" --verbose
 
   build-bin-web:
     runs-on: ubuntu-latest

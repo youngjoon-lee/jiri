@@ -9,8 +9,8 @@ on:
     branches: ["main"]
     # Publish semver tags as releases.
     tags: ['v*.*.*']
-  # pull_request:
-  #   branches: ["main"]
+  pull_request:
+    branches: ["main"]
 
 env:
   # Use docker.io for Docker Hub if empty
@@ -59,8 +59,8 @@ jobs:
         id: build-and-push
         uses: docker/build-push-action@v4.0.0
         with:
-          file: ./standalone/Dockerfile
-          context: ./standalone
+          file: ./Dockerfile
+          context: .
           build-args: BUILD_MODE=release
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
