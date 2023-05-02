@@ -14,12 +14,21 @@ use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::spawn_local;
 
+// Debugging console log.
 #[wasm_bindgen]
 extern "C" {
-    fn alert(s: &str);
+    #[wasm_bindgen(js_namespace = console)]
+    fn log(s: &str);
+}
+
+macro_rules! console_log {
+    ($($t:tt)*) => (log(&format_args!($($t)*).to_string()))
 }
 
 fn main() {
+    // Make sure panics are logged using `console.error`.
+    console_error_panic_hook::set_once();
+
     let web_options = eframe::WebOptions::default();
     spawn_local(async {
         eframe::start_web(
@@ -229,7 +238,7 @@ async fn libp2p_service(
                 SwarmEvent::OutgoingConnectionError { error, .. } => {
                     let _ = event_tx.send(Event::Error(error.to_string())).await;
                 }
-                _ => {} //TODO: console_log!
+                event => console_log!("Unhandled swarm event: {event:?}"),
             }
         }
     }
