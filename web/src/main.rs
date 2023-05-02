@@ -1,8 +1,4 @@
-use std::{
-    collections::{hash_map::DefaultHasher, VecDeque},
-    hash::{Hash, Hasher},
-    time::Duration,
-};
+use std::{collections::VecDeque, time::Duration};
 
 use egui::{Color32, RichText};
 use futures::prelude::*;
