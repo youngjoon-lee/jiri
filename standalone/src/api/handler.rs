@@ -12,7 +12,7 @@ use super::Status;
 
 pub async fn send_message(
     text: bytes::Bytes,
-    mut command_sender: mpsc::Sender<command::Command>,
+    mut command_sender: mpsc::UnboundedSender<command::Command>,
 ) -> Result<impl warp::Reply, Infallible> {
     let msg = message::Message::Text(String::from_utf8_lossy(&text).to_string());
     log::info!("Got message via API: {:?}", msg);
@@ -29,7 +29,7 @@ pub async fn send_message(
 pub async fn send_file(
     file_name: String,
     file: bytes::Bytes,
-    mut command_sender: mpsc::Sender<command::Command>,
+    mut command_sender: mpsc::UnboundedSender<command::Command>,
 ) -> Result<impl warp::Reply, Infallible> {
     let msg = message::Message::FileAd(file_name.clone());
     log::info!("Got send_file via API: {:?}", msg);

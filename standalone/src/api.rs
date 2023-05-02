@@ -10,13 +10,13 @@ use crate::p2p::{command, message};
 
 #[derive(Debug)]
 pub struct Api {
-    command_sender: mpsc::Sender<command::Command>,
+    command_sender: mpsc::UnboundedSender<command::Command>,
     message_receiver: async_channel::Receiver<message::Message>,
 }
 
 impl Api {
     pub fn new(
-        command_sender: mpsc::Sender<command::Command>,
+        command_sender: mpsc::UnboundedSender<command::Command>,
         message_receiver: async_channel::Receiver<message::Message>,
     ) -> Self {
         Api {

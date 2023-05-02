@@ -39,8 +39,8 @@ use self::file_exchange::{FileRequest, FileResponse};
 pub struct Node {
     swarm: Swarm<JiriBehaviour>,
     topic: gossipsub::IdentTopic,
-    command_sender: mpsc::Sender<command::Command>,
-    command_receiver: mpsc::Receiver<command::Command>,
+    command_sender: mpsc::UnboundedSender<command::Command>,
+    command_receiver: mpsc::UnboundedReceiver<command::Command>,
     message_sender: async_channel::Sender<message::Message>,
     pending_start_providing: HashMap<QueryId, oneshot::Sender<()>>,
     pending_get_providers: HashSet<QueryId>,
@@ -52,7 +52,7 @@ impl Node {
     pub fn new() -> Result<
         (
             Self,
-            mpsc::Sender<command::Command>,
+            mpsc::UnboundedSender<command::Command>,
             async_channel::Receiver<message::Message>,
         ),
         Box<dyn Error>,
@@ -85,7 +85,7 @@ impl Node {
 
         let swarm = SwarmBuilder::with_tokio_executor(transport, behaviour, peer_id).build();
 
-        let (command_sender, command_receiver) = mpsc::channel(0);
+        let (command_sender, command_receiver) = mpsc::unbounded();
         let (message_sender, message_receiver) = async_channel::unbounded();
 
         let tmp_dir = env::temp_dir().join(format!(
@@ -267,7 +267,7 @@ impl Node {
             message::Message::Text(_) => self.message_sender.send(msg).await?,
             message::Message::FileAd(file_name) => {
                 self.command_sender
-                    .feed(command::Command::GetFileProviders { file_name })
+                    .send(command::Command::GetFileProviders { file_name })
                     .await?;
             }
             _ => {}
@@ -312,16 +312,16 @@ impl Node {
             let file_name = file_name.clone();
             async move {
                 command_sender
-                    .feed(command::Command::RequestFile { file_name, peer })
+                    .send(command::Command::RequestFile { file_name, peer })
                     .await
             }
             .boxed()
         });
 
-        // Wait until at least one command::Command::RequestFile feeding is done
+        // Wait until at least one command::Command::RequestFile sending is done
         futures::future::select_ok(requests)
             .await
-            .map_err(|_| "Failed to feed command::Command::RequestFile to any peers")?;
+            .map_err(|_| "Failed to send command::Command::RequestFile to any peers")?;
 
         Ok(())
     }

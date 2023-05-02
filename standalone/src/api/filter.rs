@@ -6,7 +6,7 @@ use crate::p2p::{command, message};
 use super::handler;
 
 pub fn all(
-    command_sender: mpsc::Sender<command::Command>,
+    command_sender: mpsc::UnboundedSender<command::Command>,
     message_receiver: async_channel::Receiver<message::Message>,
 ) -> impl Filter<Extract = (impl warp::Reply,), Error = warp::Rejection> + Clone {
     send_message(command_sender.clone())
@@ -17,7 +17,7 @@ pub fn all(
 
 // POST /msg
 pub fn send_message(
-    command_sender: mpsc::Sender<command::Command>,
+    command_sender: mpsc::UnboundedSender<command::Command>,
 ) -> impl Filter<Extract = (impl warp::Reply,), Error = warp::Rejection> + Clone {
     warp::post()
         .and(warp::path!("msg"))
@@ -29,7 +29,7 @@ pub fn send_message(
 
 // POST /file/:file_name
 pub fn send_file(
-    command_sender: mpsc::Sender<command::Command>,
+    command_sender: mpsc::UnboundedSender<command::Command>,
 ) -> impl Filter<Extract = (impl warp::Reply,), Error = warp::Rejection> + Clone {
     warp::post()
         .and(warp::path!("file" / String))
