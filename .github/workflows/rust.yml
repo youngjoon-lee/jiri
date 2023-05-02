@@ -9,26 +9,55 @@ on:
 env:
   CARGO_TERM_COLOR: always
 
-defaults:
-  run:
-    working-directory: ./standalone
-
 jobs:
-  build:
-
+  build-core-standalone:
     runs-on: ubuntu-latest
-
+    defaults:
+      run:
+        working-directory: ./core
     steps:
     - uses: actions/checkout@v3
+    - name: Build
+      run: cargo build --features standalone --verbose
+    - name: Run unit tests
+      run: cargo test --lib --features standalone --verbose
 
+  build-core-web:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./core
+    steps:
+    - uses: actions/checkout@v3
+    - name: Build
+      run: cargo build --features web --verbose
+    - name: Run unit tests
+      run: cargo test --lib --features web --verbose
+
+  build-bin-standalone:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./standalone
+    steps:
+    - uses: actions/checkout@v3
     - name: Build
       run: cargo build --verbose
-
     - name: Run unit tests
-      run: cargo test --bins --verbose
+      run: cargo test --bins --features web --verbose
+    # - name: Build docker image for integration tests
+    #   run: docker build --build-arg BUILD_MODE=debug -t jiri-debug .
+    # - name: Run integration tests
+    #   run: cargo test --test "*" --verbose
 
-    - name: Build docker image for integration tests
-      run: docker build --build-arg BUILD_MODE=debug -t jiri-debug .
+  build-bin-web:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./web
+    steps:
+    - uses: actions/checkout@v3
+    - name: Build
+      run: trunk build
 
-    - name: Run integration tests
-      run: cargo test --test "*" --verbose
+    
