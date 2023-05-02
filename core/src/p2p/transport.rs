@@ -10,6 +10,7 @@ use libp2p::{
 use libp2p::{tcp, websocket};
 #[cfg(feature = "web")]
 use libp2p_websys_transport::WebsocketTransport;
+
 use std::error::Error;
 
 #[cfg(not(feature = "web"))]

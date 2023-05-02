@@ -26,7 +26,7 @@ use libp2p::{
     floodsub::{self, Floodsub, FloodsubEvent},
     identity,
     request_response::{self, RequestId, ResponseChannel},
-    swarm::{keep_alive, SwarmBuilder, SwarmEvent},
+    swarm::{SwarmBuilder, SwarmEvent},
     Multiaddr, PeerId, Swarm,
 };
 

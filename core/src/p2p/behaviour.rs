@@ -10,7 +10,7 @@ use libp2p::{
     floodsub::{self, Floodsub},
     identity,
     request_response::{self, ProtocolSupport},
-    swarm::NetworkBehaviour,
+    swarm::{keep_alive, NetworkBehaviour},
     PeerId,
 };
 
@@ -23,17 +23,12 @@ use libp2p::{
 #[cfg(not(feature = "web"))]
 use libp2p::gossipsub;
 
-#[cfg(feature = "web")]
-use libp2p::swarm::keep_alive;
-
 use super::file_exchange::{FileExchangeCodec, FileExchangeProtocol};
 
 #[derive(NetworkBehaviour)]
 pub struct JiriBehaviour {
-    pub floodsub: Floodsub,
-
-    #[cfg(feature = "web")]
     pub keep_alive: keep_alive::Behaviour,
+    pub floodsub: Floodsub,
 
     #[cfg(not(feature = "web"))]
     pub gossipsub: gossipsub::Behaviour,
@@ -53,10 +48,8 @@ impl JiriBehaviour {
         #[cfg(not(feature = "web"))] gossipsub_topic: &gossipsub::IdentTopic,
     ) -> Result<Self, Box<dyn Error>> {
         let mut behaviour = Self {
-            floodsub: Floodsub::new(peer_id),
-
-            #[cfg(feature = "web")]
             keep_alive: keep_alive::Behaviour::default(),
+            floodsub: Floodsub::new(peer_id),
 
             #[cfg(not(feature = "web"))]
             gossipsub: gossipsub::Behaviour::new(
