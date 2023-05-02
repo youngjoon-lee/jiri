@@ -1,10 +1,10 @@
-use async_std::io;
 use async_trait::async_trait;
 use futures::{AsyncRead, AsyncWrite, AsyncWriteExt};
 use libp2p::{
     core::upgrade::{read_length_prefixed, write_length_prefixed},
     request_response::{self, ProtocolName},
 };
+use tokio::io;
 
 #[derive(Debug, Clone)]
 pub struct FileExchangeProtocol();

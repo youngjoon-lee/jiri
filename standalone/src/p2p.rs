@@ -15,7 +15,6 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use async_std::io;
 use futures::{
     channel::{mpsc, oneshot},
     future::Either,
@@ -31,6 +30,7 @@ use libp2p::{
     swarm::{SwarmBuilder, SwarmEvent},
     tcp, websocket, yamux, Multiaddr, PeerId, Swarm, Transport,
 };
+use tokio::io;
 
 use crate::p2p::behaviour::{JiriBehaviour, JiriBehaviourEvent};
 
@@ -61,17 +61,16 @@ impl Node {
         let peer_id = id_keys.public().to_peer_id();
         log::info!("Peer {peer_id} generated");
 
-        let tcp_transport = tcp::async_io::Transport::default()
+        let tcp_transport = tcp::tokio::Transport::default()
             .upgrade(Version::V1Lazy)
             .authenticate(noise::NoiseAuthenticated::xx(&id_keys)?)
             .multiplex(yamux::YamuxConfig::default())
             .boxed();
-        let ws_transport =
-            websocket::WsConfig::new(tcp::async_io::Transport::new(tcp::Config::new()))
-                .upgrade(Version::V1)
-                .authenticate(noise::NoiseAuthenticated::xx(&id_keys)?)
-                .multiplex(yamux::YamuxConfig::default())
-                .boxed();
+        let ws_transport = websocket::WsConfig::new(tcp::tokio::Transport::new(tcp::Config::new()))
+            .upgrade(Version::V1)
+            .authenticate(noise::NoiseAuthenticated::xx(&id_keys)?)
+            .multiplex(yamux::YamuxConfig::default())
+            .boxed();
         let transport = OrTransport::new(tcp_transport, ws_transport)
             .map(|either_output, _| match either_output {
                 Either::Left((peer_id, muxer)) => (peer_id, StreamMuxerBox::new(muxer)),
@@ -84,7 +83,7 @@ impl Node {
 
         let behaviour = JiriBehaviour::new(id_keys, peer_id, &gossipsub_topic, floodsub_topic)?;
 
-        let swarm = SwarmBuilder::with_async_std_executor(transport, behaviour, peer_id).build();
+        let swarm = SwarmBuilder::with_tokio_executor(transport, behaviour, peer_id).build();
 
         let (command_sender, command_receiver) = mpsc::channel(0);
         let (message_sender, message_receiver) = async_channel::unbounded();

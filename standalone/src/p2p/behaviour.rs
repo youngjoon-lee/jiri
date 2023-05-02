@@ -24,7 +24,7 @@ pub struct JiriBehaviour {
     pub floodsub: Floodsub,
     //TODO: Understand what keep_alive actually is: https://github.com/libp2p/rust-libp2p/blob/3c5940aeadb9ed8527b6f7aa158797359085293d/examples/ping-example/src/main.rs#L86
     pub keep_alive: keep_alive::Behaviour,
-    pub mdns: mdns::async_io::Behaviour,
+    pub mdns: mdns::tokio::Behaviour,
     pub kademlia: Kademlia<MemoryStore>,
     pub request_response: request_response::Behaviour<FileExchangeCodec>,
 }
@@ -56,7 +56,7 @@ impl JiriBehaviour {
 
         let keep_alive = keep_alive::Behaviour::default();
 
-        let mdns = mdns::async_io::Behaviour::new(mdns::Config::default(), peer_id)?;
+        let mdns = mdns::tokio::Behaviour::new(mdns::Config::default(), peer_id)?;
 
         let kademlia = Kademlia::new(peer_id, MemoryStore::new(peer_id));
 

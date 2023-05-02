@@ -36,7 +36,10 @@ impl Api {
                     .expect("Failed to listen to shutdown signal");
             },
         );
+
+        log::info!("listening on http://{}", addr);
         fut.await;
+
         log::info!("Signal(interupt) detected");
         Ok(())
     }
