@@ -6,7 +6,7 @@ use futures::{
 };
 use warp::{hyper::StatusCode, ws};
 
-use crate::p2p::{command, message};
+use jiri_core::p2p::{command, message};
 
 use super::Status;
 

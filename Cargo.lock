@@ -2460,19 +2460,35 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "453ad9f582a441959e5f0d088b02ce04cfe8d51a8eaf077f12ac6d3e94164ca6"
 
 [[package]]
-name = "jiri"
+name = "jiri-core"
 version = "0.0.1"
 dependencies = [
  "async-channel",
  "async-trait",
  "bytes",
- "clap",
  "dockertest",
  "env_logger",
  "futures",
  "libp2p",
  "log",
  "multiaddr",
+ "serde",
+ "serde_derive",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
+name = "jiri-standalone"
+version = "0.1.0"
+dependencies = [
+ "async-channel",
+ "bytes",
+ "clap",
+ "env_logger",
+ "futures",
+ "jiri-core",
+ "log",
  "serde",
  "serde_derive",
  "serde_json",

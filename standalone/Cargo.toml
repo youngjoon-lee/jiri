@@ -1,25 +1,20 @@
 [package]
-name = "jiri"
-version = "0.0.1"
+name = "jiri-standalone"
+version = "0.1.0"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-async-channel = "1.8.0"
-async-trait = "0.1"
-bytes = "1.4.0"
 clap = { version = "4.2.1", features = ["derive"] }
+bytes = "1.4.0"
 env_logger = "0.10"
-futures = "0.3.28"
-libp2p = { version = "0.51.3", features = ["dns", "mdns", "kad", "noise", "macros", "request-response", "tcp", "websocket", "yamux", "gossipsub", "floodsub", "tokio"] }
 log = "0.4.17"
-multiaddr = { version = "0.17.1" }
+tokio = { version = "1.27.0", features = ["full"] }
+warp = "0.3.4"
+futures = "0.3.28"
+async-channel = "1.8.0"
 serde = { version = "1.0.160", features = ["derive"] }
 serde_derive = "1.0.160"
 serde_json = "1.0.96"
-tokio = { version = "1.27.0", features = ["full"] }
-warp = "0.3.4"
-
-[dev-dependencies]
-dockertest = "0.3.1"
+jiri-core = { path = "../core" }

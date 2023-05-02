@@ -6,7 +6,7 @@ use std::{error::Error, net::SocketAddrV4};
 use futures::channel::mpsc;
 use serde_derive::{Deserialize, Serialize};
 
-use crate::p2p::{command, message};
+use jiri_core::p2p::{command, message};
 
 #[derive(Debug)]
 pub struct Api {

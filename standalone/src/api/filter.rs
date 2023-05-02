@@ -1,7 +1,6 @@
 use futures::channel::mpsc;
+use jiri_core::p2p::{command, message};
 use warp::Filter;
-
-use crate::p2p::{command, message};
 
 use super::handler;
 

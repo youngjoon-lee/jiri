@@ -2,6 +2,7 @@ mod behaviour;
 pub mod command;
 mod file_exchange;
 pub mod message;
+mod transport;
 
 use std::{
     collections::{HashMap, HashSet},
@@ -17,38 +18,42 @@ use std::{
 
 use futures::{
     channel::{mpsc, oneshot},
-    future::Either,
     select, FutureExt, SinkExt, StreamExt,
 };
 use libp2p::{
-    core::{muxing::StreamMuxerBox, transport::OrTransport, upgrade::Version},
     floodsub::{self, FloodsubEvent},
-    gossipsub, identity,
+    identity,
     kad::{GetProvidersOk, KademliaEvent, QueryId, QueryResult},
-    mdns, noise,
+    mdns,
     request_response::{self, RequestId, ResponseChannel},
     swarm::{SwarmBuilder, SwarmEvent},
-    tcp, websocket, yamux, Multiaddr, PeerId, Swarm, Transport,
+    Multiaddr, PeerId, Swarm,
 };
+
+#[cfg(not(feature = "web"))]
+use libp2p::gossipsub;
+
 use tokio::io;
 
 use crate::p2p::behaviour::{JiriBehaviour, JiriBehaviourEvent};
 
 use self::file_exchange::{FileRequest, FileResponse};
 
-pub struct Node {
+pub struct Core {
     swarm: Swarm<JiriBehaviour>,
-    topic: gossipsub::IdentTopic,
     command_sender: mpsc::UnboundedSender<command::Command>,
     command_receiver: mpsc::UnboundedReceiver<command::Command>,
     message_sender: async_channel::Sender<message::Message>,
     pending_start_providing: HashMap<QueryId, oneshot::Sender<()>>,
     pending_get_providers: HashSet<QueryId>,
     pending_request_file: HashMap<String, HashSet<RequestId>>,
+
+    #[cfg(not(feature = "web"))]
+    topic: gossipsub::IdentTopic,
     tmp_dir: PathBuf,
 }
 
-impl Node {
+impl Core {
     pub fn new() -> Result<
         (
             Self,
@@ -61,33 +66,30 @@ impl Node {
         let peer_id = id_keys.public().to_peer_id();
         log::info!("Peer {peer_id} generated");
 
-        let tcp_transport = tcp::tokio::Transport::default()
-            .upgrade(Version::V1Lazy)
-            .authenticate(noise::NoiseAuthenticated::xx(&id_keys)?)
-            .multiplex(yamux::YamuxConfig::default())
-            .boxed();
-        let ws_transport = websocket::WsConfig::new(tcp::tokio::Transport::new(tcp::Config::new()))
-            .upgrade(Version::V1)
-            .authenticate(noise::NoiseAuthenticated::xx(&id_keys)?)
-            .multiplex(yamux::YamuxConfig::default())
-            .boxed();
-        let transport = OrTransport::new(tcp_transport, ws_transport)
-            .map(|either_output, _| match either_output {
-                Either::Left((peer_id, muxer)) => (peer_id, StreamMuxerBox::new(muxer)),
-                Either::Right((peer_id, muxer)) => (peer_id, StreamMuxerBox::new(muxer)),
-            })
-            .boxed();
-
-        let gossipsub_topic = gossipsub::IdentTopic::new("jiri-chat");
         let floodsub_topic = floodsub::Topic::new("jiri-chat-floodsub");
 
-        let behaviour = JiriBehaviour::new(id_keys, peer_id, &gossipsub_topic, floodsub_topic)?;
+        #[cfg(not(feature = "web"))]
+        let gossipsub_topic = gossipsub::IdentTopic::new("jiri-chat");
+        let behaviour =
+            JiriBehaviour::new(id_keys.clone(), peer_id, floodsub_topic, &gossipsub_topic)?;
 
-        let swarm = SwarmBuilder::with_tokio_executor(transport, behaviour, peer_id).build();
+        #[cfg(feature = "web")]
+        let behaviour = JiriBehaviour::new(id_keys.clone(), peer_id, floodsub_topic)?;
+
+        #[cfg(not(feature = "web"))]
+        let swarm = SwarmBuilder::with_tokio_executor(
+            transport::create_transport(&id_keys)?,
+            behaviour,
+            peer_id,
+        )
+        .build();
+
+        //TODO: create swarm for web
 
         let (command_sender, command_receiver) = mpsc::unbounded();
         let (message_sender, message_receiver) = async_channel::unbounded();
 
+        #[cfg(not(feature = "web"))]
         let tmp_dir = env::temp_dir().join(format!(
             "jiri.{}.{}",
             process::id(),
@@ -96,22 +98,25 @@ impl Node {
         fs::create_dir(&tmp_dir)?;
 
         Ok((
-            Node {
+            Core {
                 swarm,
-                topic: gossipsub_topic,
                 command_sender: command_sender.clone(),
                 command_receiver,
                 message_sender,
                 pending_start_providing: Default::default(),
                 pending_get_providers: Default::default(),
                 pending_request_file: Default::default(),
+
+                #[cfg(not(feature = "web"))]
                 tmp_dir,
+                topic: gossipsub_topic,
             },
             command_sender.clone(),
             message_receiver,
         ))
     }
 
+    #[cfg(not(feature = "web"))]
     pub async fn run(
         mut self,
         tcp_laddr: &String,
@@ -144,6 +149,7 @@ impl Node {
         }
     }
 
+    #[cfg(not(feature = "web"))]
     async fn handle_event<T>(
         &mut self,
         event: SwarmEvent<JiriBehaviourEvent, T>,
@@ -226,6 +232,7 @@ impl Node {
         Ok(())
     }
 
+    #[cfg(not(feature = "web"))]
     fn handle_peer_discovered(&mut self, peer_id: PeerId, peer_addr: Multiaddr) {
         log::info!("mDNS discovered a new peer: {peer_id}");
         self.swarm
@@ -242,6 +249,7 @@ impl Node {
             .add_node_to_partial_view(peer_id);
     }
 
+    #[cfg(not(feature = "web"))]
     fn handle_peer_expired(&mut self, peer_id: PeerId) {
         log::info!("mDNS found an expired peer: {peer_id}");
         self.swarm
@@ -255,6 +263,7 @@ impl Node {
             .remove_node_from_partial_view(&peer_id);
     }
 
+    #[cfg(not(feature = "web"))]
     async fn handle_message(
         &mut self,
         propagation_source: PeerId,
@@ -276,6 +285,7 @@ impl Node {
         Ok(())
     }
 
+    #[cfg(not(feature = "web"))]
     fn handle_start_providing_progressed(&mut self, id: QueryId) {
         if let Some(sender) = self.pending_start_providing.remove(&id) {
             if let Err(e) = sender.send(()) {
@@ -286,6 +296,7 @@ impl Node {
         }
     }
 
+    #[cfg(not(feature = "web"))]
     async fn handle_get_providers_progressed(
         &mut self,
         id: QueryId,
@@ -326,6 +337,7 @@ impl Node {
         Ok(())
     }
 
+    #[cfg(not(feature = "web"))]
     async fn handle_file_request_event(
         &mut self,
         request: FileRequest,
@@ -343,6 +355,7 @@ impl Node {
         Ok(())
     }
 
+    #[cfg(not(feature = "web"))]
     async fn handle_file_response_event(
         &mut self,
         request_id: RequestId,
@@ -362,6 +375,7 @@ impl Node {
         Ok(())
     }
 
+    #[cfg(not(feature = "web"))]
     fn handle_command(&mut self, command: command::Command) -> Result<(), Box<dyn Error>> {
         match command {
             command::Command::SendMessage(msg) => {
@@ -430,6 +444,7 @@ impl Node {
         Ok(())
     }
 
+    #[cfg(not(feature = "web"))]
     fn create_tmp_file(&self, file_name: String, file: Vec<u8>) -> io::Result<()> {
         let path = self.tmp_dir.join(file_name.clone());
         File::create(path)?.write(&file)?;
