@@ -4,22 +4,24 @@ use egui::{Color32, RichText};
 use futures::{channel::mpsc, SinkExt};
 use jiri_core::p2p::{self, command, event, message};
 use multiaddr::Multiaddr;
+use wasm_bindgen::prelude::wasm_bindgen;
 use wasm_bindgen_futures::spawn_local;
 
 // Debugging console log.
-// #[wasm_bindgen]
-// extern "C" {
-//     #[wasm_bindgen(js_namespace = console)]
-//     fn log(s: &str);
-// }
-//
-// macro_rules! console_log {
-//     ($($t:tt)*) => (log(&format_args!($($t)*).to_string()))
-// }
+#[wasm_bindgen]
+extern "C" {
+    #[wasm_bindgen(js_namespace = console)]
+    fn log(s: &str);
+}
+
+macro_rules! console_log {
+    ($($t:tt)*) => (log(&format_args!($($t)*).to_string()))
+}
 
 fn main() {
     // Make sure panics are logged using `console.error`.
-    // console_error_panic_hook::set_once();
+    console_error_panic_hook::set_once();
+    console_log!("Starting jiri-web...");
 
     let web_options = eframe::WebOptions::default();
     spawn_local(async {

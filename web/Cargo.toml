@@ -13,3 +13,4 @@ async-channel = "1.8.0"
 jiri-core = { path = "../core", default-features = false, features = ["web"] }
 multiaddr = "0.17.1"
 futures = "0.3.28"
+console_error_panic_hook = "0.1.7"
