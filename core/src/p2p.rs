@@ -8,13 +8,19 @@ mod transport;
 use crate::p2p::{
     behaviour::{JiriBehaviour, JiriBehaviourEvent},
     event::Event,
+    file_exchange::{FileRequest, FileResponse},
     message::Message,
 };
-use futures::{channel::mpsc, select, StreamExt};
+use futures::{
+    channel::{mpsc, oneshot},
+    select, FutureExt, SinkExt, StreamExt,
+};
 use libp2p::{
     floodsub::{self, FloodsubEvent},
     identity,
+    kad::{GetProvidersOk, KademliaEvent, QueryId, QueryResult},
     request_response::RequestId,
+    request_response::{self, ResponseChannel},
     swarm::{SwarmBuilder, SwarmEvent},
     PeerId, Swarm,
 };
@@ -24,27 +30,9 @@ use std::{
 };
 
 #[cfg(not(feature = "web"))]
-use crate::p2p::file_exchange::{FileRequest, FileResponse};
+use libp2p::{gossipsub, mdns, Multiaddr};
 #[cfg(not(feature = "web"))]
-use futures::{channel::oneshot, io, FutureExt, SinkExt};
-#[cfg(not(feature = "web"))]
-use libp2p::{
-    gossipsub,
-    kad::{GetProvidersOk, KademliaEvent, QueryId, QueryResult},
-    mdns,
-    request_response::{self, ResponseChannel},
-    Multiaddr,
-};
-#[cfg(not(feature = "web"))]
-use std::{
-    env,
-    fs::{self, File},
-    io::Write,
-    net::SocketAddrV4,
-    path::PathBuf,
-    process,
-    time::{SystemTime, UNIX_EPOCH},
-};
+use std::net::SocketAddrV4;
 
 pub struct Core {
     pub peer_id: PeerId,
@@ -54,15 +42,12 @@ pub struct Core {
     command_rx: mpsc::UnboundedReceiver<command::Command>,
     event_tx: async_channel::Sender<Event>,
     pending_request_file: HashMap<String, HashSet<RequestId>>,
+    pending_start_providing: HashMap<QueryId, oneshot::Sender<()>>,
+    pending_get_providers: HashSet<QueryId>,
+    file_store: HashMap<String, Vec<u8>>,
 
     #[cfg(not(feature = "web"))]
-    pending_start_providing: HashMap<QueryId, oneshot::Sender<()>>,
-    #[cfg(not(feature = "web"))]
-    pending_get_providers: HashSet<QueryId>,
-    #[cfg(not(feature = "web"))]
     gossipsub_topic: gossipsub::IdentTopic,
-    #[cfg(not(feature = "web"))]
-    tmp_dir: PathBuf,
 }
 
 impl Core {
@@ -116,15 +101,12 @@ impl Core {
                 command_rx,
                 event_tx,
                 pending_request_file: Default::default(),
+                pending_start_providing: Default::default(),
+                pending_get_providers: Default::default(),
+                file_store: Default::default(),
 
                 #[cfg(not(feature = "web"))]
-                pending_start_providing: Default::default(),
-                #[cfg(not(feature = "web"))]
-                pending_get_providers: Default::default(),
-                #[cfg(not(feature = "web"))]
                 gossipsub_topic,
-                #[cfg(not(feature = "web"))]
-                tmp_dir: Core::create_tmp_dir()?,
             },
             command_tx.clone(),
             event_rx,
@@ -179,7 +161,13 @@ impl Core {
     ) -> Result<(), Box<dyn Error>> {
         match event {
             SwarmEvent::NewListenAddr { address, .. } => log::info!("Listening on {address:?}"),
-            SwarmEvent::ConnectionEstablished { peer_id, .. } => {
+            SwarmEvent::ConnectionEstablished {
+                peer_id, endpoint, ..
+            } => {
+                self.swarm
+                    .behaviour_mut()
+                    .kademlia
+                    .add_address(&peer_id, endpoint.get_remote_address().clone());
                 self.swarm
                     .behaviour_mut()
                     .floodsub
@@ -187,6 +175,7 @@ impl Core {
                 self.event_tx.send(Event::Connected(peer_id)).await?;
             }
             SwarmEvent::ConnectionClosed { peer_id, .. } => {
+                self.swarm.behaviour_mut().kademlia.remove_peer(&peer_id);
                 self.swarm
                     .behaviour_mut()
                     .floodsub
@@ -200,6 +189,38 @@ impl Core {
             SwarmEvent::Behaviour(JiriBehaviourEvent::Floodsub(FloodsubEvent::Message(
                 message,
             ))) => self.handle_message(message.source, message.data).await?,
+            SwarmEvent::Behaviour(JiriBehaviourEvent::Kademlia(
+                KademliaEvent::OutboundQueryProgressed {
+                    id,
+                    result: QueryResult::StartProviding(_),
+                    ..
+                },
+            )) => self.handle_start_providing_progressed(id),
+            SwarmEvent::Behaviour(JiriBehaviourEvent::Kademlia(
+                KademliaEvent::OutboundQueryProgressed {
+                    id,
+                    result:
+                        QueryResult::GetProviders(Ok(GetProvidersOk::FoundProviders { key, providers })),
+                    ..
+                },
+            )) => {
+                self.handle_get_providers_progressed(id, key.to_vec(), providers)
+                    .await?
+            }
+            SwarmEvent::Behaviour(JiriBehaviourEvent::RequestResponse(
+                request_response::Event::Message { message, .. },
+            )) => match message {
+                request_response::Message::Request {
+                    request, channel, ..
+                } => self.handle_file_request_event(request, channel).await?,
+                request_response::Message::Response {
+                    request_id,
+                    response,
+                } => {
+                    self.handle_file_response_event(request_id, response)
+                        .await?
+                }
+            },
             _ => {
                 #[cfg(not(feature = "web"))]
                 self.handle_standalone_event(event).await?;
@@ -237,38 +258,6 @@ impl Core {
                 self.handle_message(propagation_source, message.data)
                     .await?
             }
-            SwarmEvent::Behaviour(JiriBehaviourEvent::Kademlia(
-                KademliaEvent::OutboundQueryProgressed {
-                    id,
-                    result: QueryResult::StartProviding(_),
-                    ..
-                },
-            )) => self.handle_start_providing_progressed(id),
-            SwarmEvent::Behaviour(JiriBehaviourEvent::Kademlia(
-                KademliaEvent::OutboundQueryProgressed {
-                    id,
-                    result:
-                        QueryResult::GetProviders(Ok(GetProvidersOk::FoundProviders { key, providers })),
-                    ..
-                },
-            )) => {
-                self.handle_get_providers_progressed(id, key.to_vec(), providers)
-                    .await?
-            }
-            SwarmEvent::Behaviour(JiriBehaviourEvent::RequestResponse(
-                request_response::Event::Message { message, .. },
-            )) => match message {
-                request_response::Message::Request {
-                    request, channel, ..
-                } => self.handle_file_request_event(request, channel).await?,
-                request_response::Message::Response {
-                    request_id,
-                    response,
-                } => {
-                    self.handle_file_response_event(request_id, response)
-                        .await?
-                }
-            },
             _ => {
                 if let SwarmEvent::Behaviour(ev) = event {
                     log::info!("Unrecognized event received: {ev:?}");
@@ -330,7 +319,6 @@ impl Core {
                     }))
                     .await?
             }
-            #[cfg(not(feature = "web"))]
             message::Message::FileAd(file_name) => {
                 self.command_tx
                     .send(command::Command::GetFileProviders { file_name })
@@ -342,7 +330,6 @@ impl Core {
         Ok(())
     }
 
-    #[cfg(not(feature = "web"))]
     fn handle_start_providing_progressed(&mut self, id: QueryId) {
         if let Some(sender) = self.pending_start_providing.remove(&id) {
             if let Err(e) = sender.send(()) {
@@ -353,13 +340,18 @@ impl Core {
         }
     }
 
-    #[cfg(not(feature = "web"))]
     async fn handle_get_providers_progressed(
         &mut self,
         id: QueryId,
         key: Vec<u8>,
         providers: HashSet<PeerId>,
     ) -> Result<(), Box<dyn Error>> {
+        log::debug!(
+            "get-providers is done. key:{}, providers:{:?}",
+            String::from_utf8(key.clone())?,
+            providers
+        );
+
         if !self.pending_get_providers.remove(&id) {
             log::warn!("get_providers_progressed event has been already handled. skipping this duplicate event...");
             return Ok(());
@@ -387,6 +379,7 @@ impl Core {
         });
 
         // Wait until at least one command::Command::RequestFile sending is done
+        log::debug!("Wait until at least one command::Command::RequestFile sending is done");
         futures::future::select_ok(requests)
             .await
             .map_err(|_| "Failed to send command::Command::RequestFile to any peers")?;
@@ -394,17 +387,19 @@ impl Core {
         Ok(())
     }
 
-    #[cfg(not(feature = "web"))]
     async fn handle_file_request_event(
         &mut self,
         request: FileRequest,
         channel: ResponseChannel<FileResponse>,
     ) -> Result<(), Box<dyn Error>> {
-        let file: Vec<u8> = std::fs::read(&self.tmp_dir.join(request.0.clone()))?;
+        let Some(file) = self.file_store.get(&request.0) else {
+            return Err(format!("file {} not found from store", request.0).into());
+        };
+
         self.command_tx
-            .feed(command::Command::ResponseFile {
+            .send(command::Command::ResponseFile {
                 file_name: request.0,
-                file,
+                file: file.clone(),
                 channel,
             })
             .await?;
@@ -412,7 +407,6 @@ impl Core {
         Ok(())
     }
 
-    #[cfg(not(feature = "web"))]
     async fn handle_file_response_event(
         &mut self,
         request_id: RequestId,
@@ -459,31 +453,12 @@ impl Core {
 
                 log::trace!("self.floodsub_topic: {:?}", self.floodsub_topic);
             }
-            _ => {
-                #[cfg(not(feature = "web"))]
-                self.handle_standalone_command(command)?;
-            }
-        };
-
-        Ok(())
-    }
-
-    #[cfg(not(feature = "web"))]
-    fn handle_standalone_command(
-        &mut self,
-        command: command::Command,
-    ) -> Result<(), Box<dyn Error>> {
-        match command {
             command::Command::StartFileProviding {
                 file_name,
                 file,
                 sender,
             } => {
-                if let Err(e) = self.create_tmp_file(file_name.clone(), file) {
-                    log::error!("failed to create tmp file: {e:?}");
-                    return Err(Box::from(e));
-                }
-
+                self.file_store.insert(file_name.clone(), file);
                 let query_id = self
                     .swarm
                     .behaviour_mut()
@@ -500,11 +475,14 @@ impl Core {
                 self.pending_get_providers.insert(query_id);
             }
             command::Command::RequestFile { file_name, peer } => {
+                //TODO: This doesn't work if the peer is in browser.
+                log::debug!("Sending a request to {:?} for {}", peer, file_name.clone());
                 let request_id = self
                     .swarm
                     .behaviour_mut()
                     .request_response
                     .send_request(&peer, FileRequest(file_name.clone()));
+                log::debug!("Sent request successfully");
 
                 if let Some(request_ids) = self.pending_request_file.get_mut(&file_name) {
                     request_ids.insert(request_id);
@@ -525,27 +503,8 @@ impl Core {
                     .send_response(channel, FileResponse { file_name, file })
                     .expect("Connection to peer to be still open");
             }
-            _ => {}
-        }
+        };
 
-        Ok(())
-    }
-
-    #[cfg(not(feature = "web"))]
-    fn create_tmp_dir() -> Result<PathBuf, Box<dyn Error>> {
-        let tmp_dir = env::temp_dir().join(format!(
-            "jiri.{}.{}",
-            process::id(),
-            SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
-        ));
-        fs::create_dir(&tmp_dir)?;
-        Ok(tmp_dir)
-    }
-
-    #[cfg(not(feature = "web"))]
-    fn create_tmp_file(&self, file_name: String, file: Vec<u8>) -> io::Result<()> {
-        let path = self.tmp_dir.join(file_name.clone());
-        File::create(path)?.write(&file)?;
         Ok(())
     }
 }

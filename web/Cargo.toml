@@ -14,3 +14,4 @@ jiri-core = { path = "../core", default-features = false, features = ["web"] }
 multiaddr = "0.17.1"
 futures = "0.3.28"
 console_error_panic_hook = "0.1.7"
+uuid = { version = "1.3.2", features = ["v4", "fast-rng"] }

@@ -1,9 +1,13 @@
 use std::{collections::VecDeque, time::Duration};
 
 use egui::{Color32, RichText};
-use futures::{channel::mpsc, SinkExt};
+use futures::{
+    channel::{mpsc, oneshot},
+    SinkExt,
+};
 use jiri_core::p2p::{self, command, event, message};
 use multiaddr::Multiaddr;
+use uuid::Uuid;
 use wasm_bindgen::prelude::wasm_bindgen;
 use wasm_bindgen_futures::spawn_local;
 
@@ -42,6 +46,7 @@ pub struct MainApp {
     messages: VecDeque<(Color32, String)>,
     connected: bool,
     text: String,
+    file: String,
 }
 
 impl MainApp {
@@ -60,6 +65,7 @@ impl MainApp {
             messages: Default::default(),
             connected: false,
             text: "/ip4/127.0.0.1/tcp/8081/ws".to_string(),
+            file: "put file contents".to_string(),
         }
     }
 
@@ -92,6 +98,41 @@ impl MainApp {
         ));
         self.text.clear();
     }
+
+    fn send_file(&mut self) {
+        let file_name = Uuid::new_v4().to_string();
+        let file = self.text.clone().into_bytes();
+        let (oneshot_tx, oneshot_rx) = oneshot::channel();
+        let mut command_tx = self.command_tx.clone();
+
+        spawn_local(async move {
+            let _ = command_tx
+                .send(command::Command::StartFileProviding {
+                    file_name: file_name.clone(),
+                    file,
+                    sender: oneshot_tx,
+                })
+                .await;
+
+            if let Err(e) = oneshot_rx.await {
+                console_log!("Error from oneshot_rx: {e:?}");
+                return;
+            }
+            console_log!("Start-providing is done: file_name: {}", file_name);
+
+            let _ = command_tx
+                .send(command::Command::SendMessage(message::Message::FileAd(
+                    file_name.clone(),
+                )))
+                .await;
+        });
+
+        self.messages.push_back((
+            Color32::LIGHT_BLUE,
+            format!("{}: File {}", self.peer_id, self.file),
+        ));
+        self.file.clear();
+    }
 }
 
 impl eframe::App for MainApp {
@@ -105,6 +146,13 @@ impl eframe::App for MainApp {
                     } => self
                         .messages
                         .push_back((Color32::GREEN, format!("{source_peer_id}: {text}"))),
+                    message::Message::File { file, .. } => self.messages.push_back((
+                        Color32::GREEN,
+                        format!(
+                            "FROM_UNKNOWN_TODO: File {}",
+                            String::from_utf8_lossy(&file).to_string()
+                        ),
+                    )),
                     _ => {
                         console_log!("Unhandled message: {:?}", message);
                     }
@@ -147,6 +195,21 @@ impl eframe::App for MainApp {
                 } else {
                     if ui.button("Connect").clicked() {
                         self.send_dial();
+                    }
+                }
+
+                let file_text_resp = ui.text_edit_singleline(&mut self.file);
+                if file_text_resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                    if self.connected {
+                        self.send_file();
+                    } else {
+                        console_log!("not connected to any peer");
+                    }
+                }
+
+                if ui.button("Send File").clicked() {
+                    if self.connected {
+                        self.send_file();
                     }
                 }
             });
