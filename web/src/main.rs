@@ -83,7 +83,7 @@ impl MainApp {
             self.text.clone(),
         )));
         self.messages
-            .push_back((Color32::LIGHT_BLUE, format!("{: >20}", self.text)));
+            .push_back((Color32::LIGHT_BLUE, format!("{}", self.text)));
         self.text.clear();
     }
 }
@@ -94,7 +94,9 @@ impl eframe::App for MainApp {
             match event {
                 event::Event::Msg(message) => match message {
                     message::Message::Text(text) => self.messages.push_back((Color32::GREEN, text)),
-                    _ => {} //TODO
+                    _ => {
+                        console_log!("Unhandled message: {:?}", message);
+                    }
                 },
                 event::Event::Connected(peer_id) => {
                     self.connected = true;
