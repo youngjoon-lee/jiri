@@ -11,9 +11,7 @@ use jiri_core::p2p;
 struct Args {
     // P2P listen addr
     #[arg(long, default_value = "127.0.0.1:0")]
-    p2p_tcp_laddr: String,
-    #[arg(long, default_value = "127.0.0.1:0")]
-    p2p_ws_laddr: String,
+    p2p_laddr: String,
 
     // API port
     #[arg(long, default_value = "127.0.0.1:0")]
@@ -32,7 +30,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let mut api = api::Api::new(command_sender, event_rx);
 
     select! {
-        _ = core.run(&args.p2p_tcp_laddr, &args.p2p_ws_laddr).fuse() => {
+        _ = core.run(&args.p2p_laddr).fuse() => {
             log::info!("p2p is done");
         },
         _ = api.run(&args.api_laddr).fuse() => {

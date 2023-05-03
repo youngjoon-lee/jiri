@@ -32,6 +32,8 @@ use std::{
 #[cfg(not(feature = "web"))]
 use libp2p::{gossipsub, mdns, Multiaddr};
 #[cfg(not(feature = "web"))]
+use multiaddr::Protocol;
+#[cfg(not(feature = "web"))]
 use std::net::SocketAddrV4;
 
 pub struct Core {
@@ -114,24 +116,12 @@ impl Core {
     }
 
     #[cfg(not(feature = "web"))]
-    pub async fn run(
-        mut self,
-        tcp_laddr: &String,
-        ws_laddr: &String,
-    ) -> Result<(), Box<dyn Error>> {
-        let tcp_addr = tcp_laddr.parse::<SocketAddrV4>()?;
+    pub async fn run(mut self, laddr: &String) -> Result<(), Box<dyn Error>> {
+        let addr = laddr.parse::<SocketAddrV4>()?;
         self.swarm.listen_on(
-            format!("/ip4/{}/tcp/{}", tcp_addr.ip().to_string(), tcp_addr.port()).parse()?,
-        )?;
-
-        let ws_addr = ws_laddr.parse::<SocketAddrV4>()?;
-        self.swarm.listen_on(
-            format!(
-                "/ip4/{}/tcp/{}/ws",
-                ws_addr.ip().to_string(),
-                ws_addr.port()
-            )
-            .parse()?,
+            Multiaddr::from(addr.ip().clone())
+                .with(Protocol::Tcp(addr.port()))
+                .with(Protocol::Ws("/".into())),
         )?;
 
         self.start_loop().await
