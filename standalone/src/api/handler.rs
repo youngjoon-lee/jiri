@@ -14,7 +14,10 @@ pub async fn send_message(
     text: bytes::Bytes,
     mut command_sender: mpsc::UnboundedSender<command::Command>,
 ) -> Result<impl warp::Reply, Infallible> {
-    let msg = message::Message::Text(String::from_utf8_lossy(&text).to_string());
+    let msg = message::Message::Text {
+        source_peer_id: "ANONYMOUS FROM API".to_string(),
+        text: String::from_utf8_lossy(&text).to_string(),
+    };
     log::info!("Got message via API: {:?}", msg);
     if let Err(e) = command_sender
         .send(command::Command::SendMessage(msg))
@@ -70,7 +73,7 @@ pub async fn subscribe_messages(
     while let Ok(event) = event_rx.recv().await {
         match event {
             event::Event::Msg(msg) => match msg {
-                message::Message::Text(text) => {
+                message::Message::Text { text, .. } => {
                     if let Err(e) = sender.send(ws::Message::text(text)).await {
                         log::error!("Failed to send text message to WebSocket: {e:?}");
                     }

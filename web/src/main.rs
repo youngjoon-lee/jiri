@@ -36,6 +36,7 @@ fn main() {
 }
 
 pub struct MainApp {
+    peer_id: String,
     event_rx: async_channel::Receiver<event::Event>,
     command_tx: mpsc::UnboundedSender<command::Command>,
     messages: VecDeque<(Color32, String)>,
@@ -48,10 +49,12 @@ impl MainApp {
         cc.egui_ctx.set_visuals(egui::Visuals::dark());
 
         let (core, command_tx, event_rx) = p2p::Core::new().unwrap();
+        let peer_id = core.peer_id.to_string();
         let run_core = || async move { core.run().await.unwrap() };
         spawn_local(run_core());
 
         Self {
+            peer_id,
             event_rx,
             command_tx,
             messages: Default::default(),
@@ -79,11 +82,14 @@ impl MainApp {
     }
 
     fn send_chat(&mut self) {
-        self.send_command(command::Command::SendMessage(message::Message::Text(
-            self.text.clone(),
-        )));
-        self.messages
-            .push_back((Color32::LIGHT_BLUE, format!("{}", self.text)));
+        self.send_command(command::Command::SendMessage(message::Message::Text {
+            source_peer_id: self.peer_id.clone(),
+            text: self.text.clone(),
+        }));
+        self.messages.push_back((
+            Color32::LIGHT_BLUE,
+            format!("{}: {}", self.peer_id, self.text),
+        ));
         self.text.clear();
     }
 }
@@ -93,7 +99,12 @@ impl eframe::App for MainApp {
         while let Ok(event) = self.event_rx.try_recv() {
             match event {
                 event::Event::Msg(message) => match message {
-                    message::Message::Text(text) => self.messages.push_back((Color32::GREEN, text)),
+                    message::Message::Text {
+                        source_peer_id,
+                        text,
+                    } => self
+                        .messages
+                        .push_back((Color32::GREEN, format!("{source_peer_id}: {text}"))),
                     _ => {
                         console_log!("Unhandled message: {:?}", message);
                     }

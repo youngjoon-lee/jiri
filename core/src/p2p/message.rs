@@ -2,9 +2,15 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub enum Message {
-    Text(String),
+    Text {
+        source_peer_id: String,
+        text: String,
+    },
     FileAd(String),
-    File { file_name: String, file: Vec<u8> },
+    File {
+        file_name: String,
+        file: Vec<u8>,
+    },
 }
 
 #[cfg(test)]

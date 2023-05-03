@@ -47,6 +47,7 @@ use std::{
 };
 
 pub struct Core {
+    pub peer_id: PeerId,
     swarm: Swarm<JiriBehaviour>,
     floodsub_topic: floodsub::Topic,
     command_tx: mpsc::UnboundedSender<command::Command>,
@@ -108,6 +109,7 @@ impl Core {
 
         Ok((
             Core {
+                peer_id,
                 swarm,
                 floodsub_topic,
                 command_tx: command_tx.clone(),
@@ -317,8 +319,16 @@ impl Core {
         log::info!("Got message: {:?} from peer:{propagation_source}", msg);
 
         match msg {
-            message::Message::Text(text) => {
-                self.event_tx.send(Event::Msg(Message::Text(text))).await?
+            message::Message::Text {
+                source_peer_id,
+                text,
+            } => {
+                self.event_tx
+                    .send(Event::Msg(Message::Text {
+                        source_peer_id,
+                        text,
+                    }))
+                    .await?
             }
             #[cfg(not(feature = "web"))]
             message::Message::FileAd(file_name) => {
