@@ -161,7 +161,13 @@ impl Core {
     ) -> Result<(), Box<dyn Error>> {
         match event {
             SwarmEvent::NewListenAddr { address, .. } => log::info!("Listening on {address:?}"),
-            SwarmEvent::ConnectionEstablished { peer_id, .. } => {
+            SwarmEvent::ConnectionEstablished {
+                peer_id, endpoint, ..
+            } => {
+                self.swarm
+                    .behaviour_mut()
+                    .kademlia
+                    .add_address(&peer_id, endpoint.get_remote_address().clone());
                 self.swarm
                     .behaviour_mut()
                     .floodsub
@@ -169,6 +175,7 @@ impl Core {
                 self.event_tx.send(Event::Connected(peer_id)).await?;
             }
             SwarmEvent::ConnectionClosed { peer_id, .. } => {
+                self.swarm.behaviour_mut().kademlia.remove_peer(&peer_id);
                 self.swarm
                     .behaviour_mut()
                     .floodsub
@@ -461,6 +468,7 @@ impl Core {
                 self.pending_get_providers.insert(query_id);
             }
             command::Command::RequestFile { file_name, peer } => {
+                //TODO: This doesn't work if the peer is in browser.
                 let request_id = self
                     .swarm
                     .behaviour_mut()
