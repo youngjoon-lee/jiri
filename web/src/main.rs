@@ -67,6 +67,17 @@ impl MainApp {
         });
     }
 
+    fn send_dial(&mut self) {
+        if let Ok(address) = self.text.parse::<Multiaddr>() {
+            self.send_command(command::Command::Dial(address));
+        } else {
+            self.messages.push_back((
+                Color32::RED,
+                format!("Invalid multiaddr {}", self.text.clone()),
+            ));
+        }
+    }
+
     fn send_chat(&mut self) {
         self.send_command(command::Command::SendMessage(message::Message::Text(
             self.text.clone(),
@@ -107,24 +118,23 @@ impl eframe::App for MainApp {
         // Render command panel
         egui::TopBottomPanel::bottom("command").show(ctx, |ui| {
             ui.horizontal(|ui| {
+                let resp = ui.text_edit_singleline(&mut self.text);
+                if resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                    if self.connected {
+                        self.send_chat();
+                    } else {
+                        self.send_dial();
+                    }
+                }
+
                 if self.connected {
                     if ui.button("Chat").clicked() {
                         self.send_chat();
                     }
-                } else if ui.button("Connect").clicked() {
-                    if let Ok(address) = self.text.parse::<Multiaddr>() {
-                        self.send_command(command::Command::Dial(address));
-                    } else {
-                        self.messages.push_back((
-                            Color32::RED,
-                            format!("Invalid multiaddr {}", self.text.clone()),
-                        ));
+                } else {
+                    if ui.button("Connect").clicked() {
+                        self.send_dial();
                     }
-                }
-
-                let resp = ui.text_edit_singleline(&mut self.text);
-                if resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                    self.send_chat();
                 }
             });
         });
