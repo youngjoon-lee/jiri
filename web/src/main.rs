@@ -118,6 +118,7 @@ impl MainApp {
                 console_log!("Error from oneshot_rx: {e:?}");
                 return;
             }
+            console_log!("Start-providing is done: file_name: {}", file_name);
 
             let _ = command_tx
                 .send(command::Command::SendMessage(message::Message::FileAd(

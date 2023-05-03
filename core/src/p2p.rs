@@ -346,6 +346,12 @@ impl Core {
         key: Vec<u8>,
         providers: HashSet<PeerId>,
     ) -> Result<(), Box<dyn Error>> {
+        log::debug!(
+            "get-providers is done. key:{}, providers:{:?}",
+            String::from_utf8(key.clone())?,
+            providers
+        );
+
         if !self.pending_get_providers.remove(&id) {
             log::warn!("get_providers_progressed event has been already handled. skipping this duplicate event...");
             return Ok(());
@@ -373,6 +379,7 @@ impl Core {
         });
 
         // Wait until at least one command::Command::RequestFile sending is done
+        log::debug!("Wait until at least one command::Command::RequestFile sending is done");
         futures::future::select_ok(requests)
             .await
             .map_err(|_| "Failed to send command::Command::RequestFile to any peers")?;
@@ -469,11 +476,13 @@ impl Core {
             }
             command::Command::RequestFile { file_name, peer } => {
                 //TODO: This doesn't work if the peer is in browser.
+                log::debug!("Sending a request to {:?} for {}", peer, file_name.clone());
                 let request_id = self
                     .swarm
                     .behaviour_mut()
                     .request_response
                     .send_request(&peer, FileRequest(file_name.clone()));
+                log::debug!("Sent request successfully");
 
                 if let Some(request_ids) = self.pending_request_file.get_mut(&file_name) {
                     request_ids.insert(request_id);
