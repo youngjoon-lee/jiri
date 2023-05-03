@@ -188,6 +188,16 @@ impl eframe::App for MainApp {
                     }
                 }
 
+                if self.connected {
+                    if ui.button("Chat").clicked() {
+                        self.send_chat();
+                    }
+                } else {
+                    if ui.button("Connect").clicked() {
+                        self.send_dial();
+                    }
+                }
+
                 let file_text_resp = ui.text_edit_singleline(&mut self.file);
                 if file_text_resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                     if self.connected {
@@ -197,13 +207,9 @@ impl eframe::App for MainApp {
                     }
                 }
 
-                if self.connected {
-                    if ui.button("Chat").clicked() {
-                        self.send_chat();
-                    }
-                } else {
-                    if ui.button("Connect").clicked() {
-                        self.send_dial();
+                if ui.button("Send File").clicked() {
+                    if self.connected {
+                        self.send_file();
                     }
                 }
             });
