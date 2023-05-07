@@ -61,7 +61,7 @@ impl Core {
         ),
         Box<dyn Error>,
     > {
-        let id_keys = identity::Keypair::generate_ed25519();
+        let id_keys = identity::Keypair::generate_secp256k1();
         let peer_id = id_keys.public().to_peer_id();
         log::info!("Peer {peer_id} generated");
 

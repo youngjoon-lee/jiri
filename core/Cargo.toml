@@ -13,7 +13,7 @@ async-trait = "0.1"
 bytes = "1.4.0"
 env_logger = "0.10"
 futures = "0.3.28"
-libp2p = { version = "0.51.3", default-features = false, features = ["kad", "noise", "macros", "yamux", "floodsub", "request-response"] }
+libp2p = { version = "0.51.3", default-features = false, features = ["kad", "noise", "macros", "yamux", "floodsub", "request-response", "secp256k1"] }
 libp2p-websys-transport = { version = "0.1.5", optional = true }
 log = "0.4.17"
 multiaddr = { version = "0.17.1" }
