@@ -1,0 +1,31 @@
+[package]
+name = "jiri-rs"
+version = "0.0.1"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+clap = { version = "3.2.1", features = ["derive"] }
+env_logger = "0.10"
+futures = "0.3.28"
+log = "0.4.17"
+multiaddr = { version = "0.17.1" }
+libp2p = { git = "https://github.com/youngjoon-lee/rust-libp2p.git", branch = "webrtc-multiaddr", features = [
+	"identify",
+	"ping",
+	"tokio",
+	"gossipsub",
+	"webrtc",
+	"macros",
+	"relay",
+	"kad",
+	"rsa",
+	"ed25519",
+	"quic",
+] }
+rand = "0.8.5"
+tokio = { version = "1.27.0", features = ["full"] }
+tokio-util = { version = "0.7", features = ["full"] }
+anyhow = "1.0"
+futures-timer = "3.0.2"
