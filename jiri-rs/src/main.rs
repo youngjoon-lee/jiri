@@ -2,19 +2,21 @@ use anyhow::{Context, Result};
 use clap::Parser;
 use futures::future::{select, Either};
 use futures::StreamExt;
+use libp2p::core::upgrade;
 use libp2p::{
     core::muxing::StreamMuxerBox,
     gossipsub, identify, identity,
     kad::record::store::MemoryStore,
     kad::{Kademlia, KademliaConfig},
     multiaddr::{Multiaddr, Protocol},
-    quic, relay,
+    relay,
     swarm::{
         keep_alive, AddressRecord, AddressScore, NetworkBehaviour, Swarm, SwarmBuilder, SwarmEvent,
     },
     webrtc::{self, tokio::Certificate},
     PeerId, StreamProtocol, Transport,
 };
+use libp2p::{noise, tcp, websocket, yamux};
 use log::{debug, error, info, warn};
 use std::net::{IpAddr, Ipv4Addr};
 use std::path::Path;
@@ -29,7 +31,7 @@ const TICK_INTERVAL: Duration = Duration::from_secs(15);
 const KADEMLIA_PROTOCOL_NAME: &str = "/jiri/lan/kad/1.0.0";
 const GOSSIPSUB_TOPIC: &str = "jiri";
 const PORT_WEBRTC: u16 = 9090;
-const PORT_QUIC: u16 = 9091;
+const PORT_WS: u16 = 9091;
 const LOCAL_KEY_PATH: &str = "./local_key";
 const LOCAL_CERT_PATH: &str = "./cert.pem";
 
@@ -63,16 +65,14 @@ async fn main() -> Result<()> {
         .with(Protocol::Udp(PORT_WEBRTC))
         .with(Protocol::WebRTCDirect);
 
-    let address_quic = Multiaddr::from(Ipv4Addr::UNSPECIFIED)
-        .with(Protocol::Udp(PORT_QUIC))
-        .with(Protocol::QuicV1);
+    let address_ws = Multiaddr::from(Ipv4Addr::UNSPECIFIED)
+        .with(Protocol::Tcp(PORT_WS))
+        .with(Protocol::Ws("/".into()));
 
     swarm
         .listen_on(address_webrtc.clone())
         .expect("listen on webrtc");
-    swarm
-        .listen_on(address_quic.clone())
-        .expect("listen on quic");
+    swarm.listen_on(address_ws.clone()).expect("listen on ws");
 
     if let Some(listen_address) = opt.listen_address {
         // match on whether the listen address string is an IP address or not (do nothing if not)
@@ -273,10 +273,14 @@ fn create_swarm(
     let transport = {
         let webrtc = webrtc::tokio::Transport::new(local_key.clone(), certificate);
 
-        let quic = quic::tokio::Transport::new(quic::Config::new(&local_key));
+        let ws = websocket::WsConfig::new(tcp::tokio::Transport::new(tcp::Config::default()))
+            .upgrade(upgrade::Version::V1)
+            .authenticate(noise::Config::new(&local_key)?)
+            .multiplex(yamux::Config::default())
+            .boxed();
 
         webrtc
-            .or_transport(quic)
+            .or_transport(ws)
             .map(|fut, _| match fut {
                 futures::future::Either::Right((local_peer_id, conn)) => {
                     (local_peer_id, StreamMuxerBox::new(conn))

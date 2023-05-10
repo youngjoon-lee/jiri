@@ -22,7 +22,10 @@ libp2p = { git = "https://github.com/youngjoon-lee/rust-libp2p.git", branch = "w
 	"kad",
 	"rsa",
 	"ed25519",
-	"quic",
+	"websocket",
+	"tcp",
+	"noise",
+	"yamux",
 ] }
 rand = "0.8.5"
 tokio = { version = "1.27.0", features = ["full"] }
