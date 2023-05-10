@@ -1,6 +1,7 @@
 import Head from 'next/head'
 import Nav from '@/components/nav'
 import ChatContainer from '@/components/chat'
+import Footer from '@/components/footer'
 
 export default function Chat() {
   return (
@@ -19,6 +20,7 @@ export default function Chat() {
           </main>
         </div>
       </main>
+      <Footer />
     </>
   )
 }

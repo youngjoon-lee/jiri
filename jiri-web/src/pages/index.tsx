@@ -7,6 +7,7 @@ import { usePeerContext } from '../context/peer-ctx'
 import { useCallback, useEffect, useState } from 'react'
 import { multiaddr } from '@multiformats/multiaddr'
 import { connectToMultiaddr } from '../lib/libp2p'
+import Footer from '@/components/footer'
 
 
 export default function Home() {
@@ -165,6 +166,7 @@ export default function Home() {
           </main>
         </div>
       </main>
+      <Footer />
     </>
   )
 }
