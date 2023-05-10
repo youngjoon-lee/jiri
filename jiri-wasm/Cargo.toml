@@ -39,7 +39,6 @@ libp2p = { git = "https://github.com/youngjoon-lee/rust-libp2p.git", branch = "g
 	"wasm-ext",
 	"wasm-ext-websocket",
 ]} 
-gloo = { version = "0.8.0", features = ["futures"] }
 futures = "0.3.28"
 futures-util = "0.3.28"
 wasm-bindgen-futures = "0.4.35"

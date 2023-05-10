@@ -29,10 +29,15 @@ use wasm_bindgen_futures::spawn_local;
 #[global_allocator]
 static ALLOC: wee_alloc::WeeAlloc = wee_alloc::WeeAlloc::INIT;
 
-macro_rules! log {
-    ($($arg:expr),+) => {
-       gloo::console::externs::log(::alloc::boxed::Box::from([$(gloo::console::__macro::JsValue::from($arg),)+]))
-    }
+// Debugging console log.
+#[wasm_bindgen]
+extern "C" {
+    #[wasm_bindgen(js_namespace = console)]
+    fn log(s: &str);
+}
+
+macro_rules! console_log {
+    ($($t:tt)*) => (log(&format_args!($($t)*).to_string()))
 }
 
 const KADEMLIA_PROTOCOL_NAME: &str = "/jiri/lan/kad/1.0.0";
@@ -50,7 +55,7 @@ pub fn start() {
 pub async fn run() {
     let local_key = identity::Keypair::generate_ed25519();
     let local_peer_id = PeerId::from(local_key.public());
-    log!(format_args!("Local peer id: {}", local_peer_id).to_string());
+    console_log!("Local peer id: {}", local_peer_id);
 
     let mut swarm = create_swarm(local_key, local_peer_id).unwrap();
 
@@ -64,18 +69,18 @@ pub async fn run() {
         match swarm.next().await.unwrap() {
             SwarmEvent::NewListenAddr { address, .. } => {
                 let p2p_address = address.with(Protocol::P2p((*swarm.local_peer_id()).into()));
-                log!(format!("Listen p2p address: {:?}", p2p_address));
+                console_log!("Listen p2p address: {p2p_address:?}");
             }
             SwarmEvent::ConnectionEstablished { peer_id, .. } => {
-                log!(format!("Connected to {}", peer_id));
+                console_log!("Connected to {peer_id}");
             }
             SwarmEvent::OutgoingConnectionError { peer_id, error } => {
-                log!(format!("Failed to dial {:?}: {}", peer_id, error));
+                console_log!("Failed to dial {peer_id:?}: {error}");
             }
             SwarmEvent::ConnectionClosed { peer_id, cause, .. } => {
-                log!(format!("Connection to {} closed: {:?}", peer_id, cause));
+                console_log!("Connection to {peer_id} closed: {cause:?}");
                 swarm.behaviour_mut().kademlia.remove_peer(&peer_id);
-                log!("Removed {peer_id} from the routing table (if it was in there).");
+                console_log!("Removed {peer_id} from the routing table (if it was in there).");
             }
             SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(
                 libp2p::gossipsub::Event::Message {
@@ -84,19 +89,19 @@ pub async fn run() {
                     message,
                 },
             )) => {
-                log!(format!(
+                console_log!(
                     "Received message from {:?}: {}",
                     message.source,
                     String::from_utf8(message.data).unwrap()
-                ));
+                );
             }
             SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(
                 libp2p::gossipsub::Event::Subscribed { peer_id, topic },
             )) => {
-                log!(format!("{} subscribed to {}", peer_id, topic));
+                console_log!("{peer_id} subscribed to {topic}");
             }
             SwarmEvent::Behaviour(BehaviourEvent::Identify(e)) => {
-                log!("BehaviourEvent::Identify {e:?}");
+                console_log!("BehaviourEvent::Identify {e:?}");
 
                 if let identify::Event::Error { peer_id, error } = e {
                     match error {
@@ -105,10 +110,12 @@ pub async fn run() {
                             // maybe there's a way to get this with TransportEvent
                             // but for now remove the peer from routing table if there's an Identify timeout
                             swarm.behaviour_mut().kademlia.remove_peer(&peer_id);
-                            log!("Removed {peer_id} from the routing table (if it was in there).");
+                            console_log!(
+                                "Removed {peer_id} from the routing table (if it was in there)."
+                            );
                         }
                         _ => {
-                            log!("StreamUpgradeError: {error}");
+                            console_log!("StreamUpgradeError: {error}");
                         }
                     }
                 } else if let identify::Event::Received {
@@ -122,10 +129,7 @@ pub async fn run() {
                         },
                 } = e
                 {
-                    log!(format!(
-                        "identify::Event::Received observed_addr: {}",
-                        observed_addr
-                    ));
+                    console_log!("identify::Event::Received observed_addr: {observed_addr}");
 
                     swarm.add_external_address(observed_addr, AddressScore::Infinite);
 
@@ -134,33 +138,26 @@ pub async fn run() {
                         .any(|p| p.to_string() == KADEMLIA_PROTOCOL_NAME)
                     {
                         for addr in listen_addrs {
-                            log!(format!("identify::Event::Received listen addr: {}", addr));
-                            // TODO (fixme): the below doesn't work because the address is still missing /webrtc/p2p even after https://github.com/libp2p/js-libp2p-webrtc/pull/121
+                            console_log!("identify::Event::Received listen addr: {addr}");
                             swarm
                                 .behaviour_mut()
                                 .kademlia
                                 .add_address(&peer_id, addr.clone());
 
-                            // let webrtc_address = addr
-                            //     .with(Protocol::WebRTCDirect)
-                            //     .with(Protocol::P2p(peer_id.into()));
-
                             swarm
                                 .behaviour_mut()
                                 .kademlia
-                                // .add_address(&peer_id, webrtc_address.clone());
                                 .add_address(&peer_id, addr.clone());
-                            // log!("Added {webrtc_address} to the routing table.");
-                            log!("Added {addr} to the routing table.");
+                            console_log!("Added {addr} to the routing table.");
                         }
                     }
                 }
             }
             SwarmEvent::Behaviour(BehaviourEvent::Kademlia(e)) => {
-                log!(format!("Kademlia event: {:?}", e));
+                console_log!("Kademlia event: {e:?}");
             }
             event => {
-                log!(format!("Other type of event: {:?}", event));
+                console_log!("Other type of event: {event:?}");
             }
         }
     }
