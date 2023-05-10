@@ -1537,6 +1537,9 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7a5bbe824c507c5da5956355e86a746d82e0e1464f65d862cc5e71da70e94b2c"
 dependencies = [
  "cfg-if",
+ "js-sys",
+ "wasm-bindgen",
+ "web-sys",
 ]
 
 [[package]]
@@ -1661,7 +1664,7 @@ checksum = "7fc7aa29613bd6a620df431842069224d8bc9011086b1db4c0e0cd47fa03ec9a"
 [[package]]
 name = "libp2p"
 version = "0.52.0"
-source = "git+https://github.com/youngjoon-lee/rust-libp2p.git?branch=webrtc-multiaddr#7529dd52dc9c7b129c8c5c6d4017394333ad7c6b"
+source = "git+https://github.com/youngjoon-lee/rust-libp2p.git?branch=gossipsub-wasm#d81554d5fda38c3cbb5677e3f5f96eb21101dbb7"
 dependencies = [
  "bytes",
  "futures",
@@ -1694,7 +1697,7 @@ dependencies = [
 [[package]]
 name = "libp2p-allow-block-list"
 version = "0.2.0"
-source = "git+https://github.com/youngjoon-lee/rust-libp2p.git?branch=webrtc-multiaddr#7529dd52dc9c7b129c8c5c6d4017394333ad7c6b"
+source = "git+https://github.com/youngjoon-lee/rust-libp2p.git?branch=gossipsub-wasm#d81554d5fda38c3cbb5677e3f5f96eb21101dbb7"
 dependencies = [
  "libp2p-core",
  "libp2p-identity",
@@ -1705,7 +1708,7 @@ dependencies = [
 [[package]]
 name = "libp2p-connection-limits"
 version = "0.2.0"
-source = "git+https://github.com/youngjoon-lee/rust-libp2p.git?branch=webrtc-multiaddr#7529dd52dc9c7b129c8c5c6d4017394333ad7c6b"
+source = "git+https://github.com/youngjoon-lee/rust-libp2p.git?branch=gossipsub-wasm#d81554d5fda38c3cbb5677e3f5f96eb21101dbb7"
 dependencies = [
  "libp2p-core",
  "libp2p-identity",
@@ -1716,7 +1719,7 @@ dependencies = [
 [[package]]
 name = "libp2p-core"
 version = "0.40.0"
-source = "git+https://github.com/youngjoon-lee/rust-libp2p.git?branch=webrtc-multiaddr#7529dd52dc9c7b129c8c5c6d4017394333ad7c6b"
+source = "git+https://github.com/youngjoon-lee/rust-libp2p.git?branch=gossipsub-wasm#d81554d5fda38c3cbb5677e3f5f96eb21101dbb7"
 dependencies = [
  "either",
  "fnv",
@@ -1743,7 +1746,7 @@ dependencies = [
 [[package]]
 name = "libp2p-dns"
 version = "0.40.0"
-source = "git+https://github.com/youngjoon-lee/rust-libp2p.git?branch=webrtc-multiaddr#7529dd52dc9c7b129c8c5c6d4017394333ad7c6b"
+source = "git+https://github.com/youngjoon-lee/rust-libp2p.git?branch=gossipsub-wasm#d81554d5fda38c3cbb5677e3f5f96eb21101dbb7"
 dependencies = [
  "futures",
  "libp2p-core",
@@ -1757,7 +1760,7 @@ dependencies = [
 [[package]]
 name = "libp2p-gossipsub"
 version = "0.45.0"
-source = "git+https://github.com/youngjoon-lee/rust-libp2p.git?branch=webrtc-multiaddr#7529dd52dc9c7b129c8c5c6d4017394333ad7c6b"
+source = "git+https://github.com/youngjoon-lee/rust-libp2p.git?branch=gossipsub-wasm#d81554d5fda38c3cbb5677e3f5f96eb21101dbb7"
 dependencies = [
  "asynchronous-codec",
  "base64 0.21.0",
@@ -1787,7 +1790,7 @@ dependencies = [
 [[package]]
 name = "libp2p-identify"
 version = "0.43.0"
-source = "git+https://github.com/youngjoon-lee/rust-libp2p.git?branch=webrtc-multiaddr#7529dd52dc9c7b129c8c5c6d4017394333ad7c6b"
+source = "git+https://github.com/youngjoon-lee/rust-libp2p.git?branch=gossipsub-wasm#d81554d5fda38c3cbb5677e3f5f96eb21101dbb7"
 dependencies = [
  "asynchronous-codec",
  "either",
@@ -1808,7 +1811,7 @@ dependencies = [
 [[package]]
 name = "libp2p-identity"
 version = "0.2.0"
-source = "git+https://github.com/youngjoon-lee/rust-libp2p.git?branch=webrtc-multiaddr#7529dd52dc9c7b129c8c5c6d4017394333ad7c6b"
+source = "git+https://github.com/youngjoon-lee/rust-libp2p.git?branch=gossipsub-wasm#d81554d5fda38c3cbb5677e3f5f96eb21101dbb7"
 dependencies = [
  "asn1_der",
  "bs58",
@@ -1827,7 +1830,7 @@ dependencies = [
 [[package]]
 name = "libp2p-kad"
 version = "0.44.0"
-source = "git+https://github.com/youngjoon-lee/rust-libp2p.git?branch=webrtc-multiaddr#7529dd52dc9c7b129c8c5c6d4017394333ad7c6b"
+source = "git+https://github.com/youngjoon-lee/rust-libp2p.git?branch=gossipsub-wasm#d81554d5fda38c3cbb5677e3f5f96eb21101dbb7"
 dependencies = [
  "arrayvec",
  "asynchronous-codec",
@@ -1854,7 +1857,7 @@ dependencies = [
 [[package]]
 name = "libp2p-mdns"
 version = "0.44.0"
-source = "git+https://github.com/youngjoon-lee/rust-libp2p.git?branch=webrtc-multiaddr#7529dd52dc9c7b129c8c5c6d4017394333ad7c6b"
+source = "git+https://github.com/youngjoon-lee/rust-libp2p.git?branch=gossipsub-wasm#d81554d5fda38c3cbb5677e3f5f96eb21101dbb7"
 dependencies = [
  "data-encoding",
  "futures",
@@ -1874,7 +1877,7 @@ dependencies = [
 [[package]]
 name = "libp2p-metrics"
 version = "0.13.0"
-source = "git+https://github.com/youngjoon-lee/rust-libp2p.git?branch=webrtc-multiaddr#7529dd52dc9c7b129c8c5c6d4017394333ad7c6b"
+source = "git+https://github.com/youngjoon-lee/rust-libp2p.git?branch=gossipsub-wasm#d81554d5fda38c3cbb5677e3f5f96eb21101dbb7"
 dependencies = [
  "libp2p-core",
  "libp2p-gossipsub",
@@ -1890,7 +1893,7 @@ dependencies = [
 [[package]]
 name = "libp2p-noise"
 version = "0.43.0"
-source = "git+https://github.com/youngjoon-lee/rust-libp2p.git?branch=webrtc-multiaddr#7529dd52dc9c7b129c8c5c6d4017394333ad7c6b"
+source = "git+https://github.com/youngjoon-lee/rust-libp2p.git?branch=gossipsub-wasm#d81554d5fda38c3cbb5677e3f5f96eb21101dbb7"
 dependencies = [
  "bytes",
  "curve25519-dalek 3.2.0",
@@ -1912,7 +1915,7 @@ dependencies = [
 [[package]]
 name = "libp2p-ping"
 version = "0.43.0"
-source = "git+https://github.com/youngjoon-lee/rust-libp2p.git?branch=webrtc-multiaddr#7529dd52dc9c7b129c8c5c6d4017394333ad7c6b"
+source = "git+https://github.com/youngjoon-lee/rust-libp2p.git?branch=gossipsub-wasm#d81554d5fda38c3cbb5677e3f5f96eb21101dbb7"
 dependencies = [
  "either",
  "futures",
@@ -1929,7 +1932,7 @@ dependencies = [
 [[package]]
 name = "libp2p-quic"
 version = "0.8.0-alpha"
-source = "git+https://github.com/youngjoon-lee/rust-libp2p.git?branch=webrtc-multiaddr#7529dd52dc9c7b129c8c5c6d4017394333ad7c6b"
+source = "git+https://github.com/youngjoon-lee/rust-libp2p.git?branch=gossipsub-wasm#d81554d5fda38c3cbb5677e3f5f96eb21101dbb7"
 dependencies = [
  "bytes",
  "futures",
@@ -1950,7 +1953,7 @@ dependencies = [
 [[package]]
 name = "libp2p-relay"
 version = "0.16.0"
-source = "git+https://github.com/youngjoon-lee/rust-libp2p.git?branch=webrtc-multiaddr#7529dd52dc9c7b129c8c5c6d4017394333ad7c6b"
+source = "git+https://github.com/youngjoon-lee/rust-libp2p.git?branch=gossipsub-wasm#d81554d5fda38c3cbb5677e3f5f96eb21101dbb7"
 dependencies = [
  "asynchronous-codec",
  "bytes",
@@ -1973,7 +1976,7 @@ dependencies = [
 [[package]]
 name = "libp2p-swarm"
 version = "0.43.0"
-source = "git+https://github.com/youngjoon-lee/rust-libp2p.git?branch=webrtc-multiaddr#7529dd52dc9c7b129c8c5c6d4017394333ad7c6b"
+source = "git+https://github.com/youngjoon-lee/rust-libp2p.git?branch=gossipsub-wasm#d81554d5fda38c3cbb5677e3f5f96eb21101dbb7"
 dependencies = [
  "async-std",
  "either",
@@ -1995,7 +1998,7 @@ dependencies = [
 [[package]]
 name = "libp2p-swarm-derive"
 version = "0.33.0"
-source = "git+https://github.com/youngjoon-lee/rust-libp2p.git?branch=webrtc-multiaddr#7529dd52dc9c7b129c8c5c6d4017394333ad7c6b"
+source = "git+https://github.com/youngjoon-lee/rust-libp2p.git?branch=gossipsub-wasm#d81554d5fda38c3cbb5677e3f5f96eb21101dbb7"
 dependencies = [
  "heck",
  "quote",
@@ -2005,7 +2008,7 @@ dependencies = [
 [[package]]
 name = "libp2p-tcp"
 version = "0.40.0"
-source = "git+https://github.com/youngjoon-lee/rust-libp2p.git?branch=webrtc-multiaddr#7529dd52dc9c7b129c8c5c6d4017394333ad7c6b"
+source = "git+https://github.com/youngjoon-lee/rust-libp2p.git?branch=gossipsub-wasm#d81554d5fda38c3cbb5677e3f5f96eb21101dbb7"
 dependencies = [
  "futures",
  "futures-timer",
@@ -2021,7 +2024,7 @@ dependencies = [
 [[package]]
 name = "libp2p-tls"
 version = "0.2.0"
-source = "git+https://github.com/youngjoon-lee/rust-libp2p.git?branch=webrtc-multiaddr#7529dd52dc9c7b129c8c5c6d4017394333ad7c6b"
+source = "git+https://github.com/youngjoon-lee/rust-libp2p.git?branch=gossipsub-wasm#d81554d5fda38c3cbb5677e3f5f96eb21101dbb7"
 dependencies = [
  "futures",
  "futures-rustls",
@@ -2039,7 +2042,7 @@ dependencies = [
 [[package]]
 name = "libp2p-webrtc"
 version = "0.5.0-alpha"
-source = "git+https://github.com/youngjoon-lee/rust-libp2p.git?branch=webrtc-multiaddr#7529dd52dc9c7b129c8c5c6d4017394333ad7c6b"
+source = "git+https://github.com/youngjoon-lee/rust-libp2p.git?branch=gossipsub-wasm#d81554d5fda38c3cbb5677e3f5f96eb21101dbb7"
 dependencies = [
  "async-trait",
  "asynchronous-codec",
@@ -2070,7 +2073,7 @@ dependencies = [
 [[package]]
 name = "libp2p-websocket"
 version = "0.42.0"
-source = "git+https://github.com/youngjoon-lee/rust-libp2p.git?branch=webrtc-multiaddr#7529dd52dc9c7b129c8c5c6d4017394333ad7c6b"
+source = "git+https://github.com/youngjoon-lee/rust-libp2p.git?branch=gossipsub-wasm#d81554d5fda38c3cbb5677e3f5f96eb21101dbb7"
 dependencies = [
  "either",
  "futures",
@@ -2089,7 +2092,7 @@ dependencies = [
 [[package]]
 name = "libp2p-yamux"
 version = "0.44.0"
-source = "git+https://github.com/youngjoon-lee/rust-libp2p.git?branch=webrtc-multiaddr#7529dd52dc9c7b129c8c5c6d4017394333ad7c6b"
+source = "git+https://github.com/youngjoon-lee/rust-libp2p.git?branch=gossipsub-wasm#d81554d5fda38c3cbb5677e3f5f96eb21101dbb7"
 dependencies = [
  "futures",
  "libp2p-core",
@@ -2308,7 +2311,7 @@ dependencies = [
 [[package]]
 name = "multistream-select"
 version = "0.13.0"
-source = "git+https://github.com/youngjoon-lee/rust-libp2p.git?branch=webrtc-multiaddr#7529dd52dc9c7b129c8c5c6d4017394333ad7c6b"
+source = "git+https://github.com/youngjoon-lee/rust-libp2p.git?branch=gossipsub-wasm#d81554d5fda38c3cbb5677e3f5f96eb21101dbb7"
 dependencies = [
  "bytes",
  "futures",
@@ -2805,7 +2808,7 @@ dependencies = [
 [[package]]
 name = "quick-protobuf-codec"
 version = "0.2.0"
-source = "git+https://github.com/youngjoon-lee/rust-libp2p.git?branch=webrtc-multiaddr#7529dd52dc9c7b129c8c5c6d4017394333ad7c6b"
+source = "git+https://github.com/youngjoon-lee/rust-libp2p.git?branch=gossipsub-wasm#d81554d5fda38c3cbb5677e3f5f96eb21101dbb7"
 dependencies = [
  "asynchronous-codec",
  "bytes",
@@ -3126,7 +3129,7 @@ dependencies = [
 [[package]]
 name = "rw-stream-sink"
 version = "0.4.0"
-source = "git+https://github.com/youngjoon-lee/rust-libp2p.git?branch=webrtc-multiaddr#7529dd52dc9c7b129c8c5c6d4017394333ad7c6b"
+source = "git+https://github.com/youngjoon-lee/rust-libp2p.git?branch=gossipsub-wasm#d81554d5fda38c3cbb5677e3f5f96eb21101dbb7"
 dependencies = [
  "futures",
  "pin-project",
@@ -3946,10 +3949,10 @@ checksum = "0046fef7e28c3804e5e38bfa31ea2a0f73905319b677e57ebe37e49358989b5d"
 [[package]]
 name = "wasm-timer"
 version = "0.2.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "be0ecb0db480561e9a7642b5d3e4187c128914e58aa84330b9493e3eb68c5e7f"
+source = "git+https://github.com/youngjoon-lee/wasm-timer.git?branch=instant#15e8835322f2912266a4ce9df46b42779e4eb718"
 dependencies = [
  "futures",
+ "instant",
  "js-sys",
  "parking_lot 0.11.2",
  "pin-utils",

@@ -11,7 +11,7 @@ env_logger = "0.10"
 futures = "0.3.28"
 log = "0.4.17"
 multiaddr = { version = "0.17.1" }
-libp2p = { git = "https://github.com/youngjoon-lee/rust-libp2p.git", branch = "webrtc-multiaddr", features = [
+libp2p = { git = "https://github.com/youngjoon-lee/rust-libp2p.git", branch = "gossipsub-wasm", features = [
 	"identify",
 	"ping",
 	"tokio",
