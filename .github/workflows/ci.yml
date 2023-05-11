@@ -28,6 +28,10 @@ jobs:
         working-directory: ./jiri-wasm
     steps:
     - uses: actions/checkout@v3
+    - name: Use Node.js 16.x
+      uses: actions/setup-node@v3
+      with:
+        node-version: 16.x
     - name: Install wasm-pack
       run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
     - name: Build with wasm-pack
