@@ -86,7 +86,7 @@ impl JiriWebApp {
         self.send_command(command::Command::SendMessage(self.message.clone()));
         self.messages.push_back((
             Color32::from_rgb(14, 130, 255),
-            format!("{}: {}", truncate_peer_id(&self.my_peer_id), self.message),
+            format!("[{}] {}", truncate_peer_id(&self.my_peer_id), self.message),
         ));
     }
 }
@@ -115,7 +115,7 @@ impl eframe::App for JiriWebApp {
                         console_log!("EVENT: MESSAGE: {source_peer_id} {text}");
                         self.messages.push_back((
                             Color32::from_rgb(207, 1, 248),
-                            format!("{}: {text}", truncate_peer_id(&source_peer_id)),
+                            format!("[{}] {text}", truncate_peer_id(&source_peer_id)),
                         ));
                     }
                     event::Event::Connected(multiaddr) => {
