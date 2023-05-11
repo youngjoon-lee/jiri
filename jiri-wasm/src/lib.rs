@@ -11,11 +11,11 @@ use std::{
 
 use futures_util::StreamExt;
 use libp2p::{
-    core::upgrade,
+    core::{muxing::StreamMuxerBox, upgrade},
     gossipsub, identify, identity,
     kad::{store::MemoryStore, Kademlia, KademliaConfig},
     multiaddr::{Multiaddr, Protocol},
-    noise,
+    noise, relay,
     swarm::{keep_alive, AddressScore, NetworkBehaviour, SwarmBuilder, SwarmEvent},
     wasm_ext::{ffi::websocket_transport, ExtTransport},
     yamux, PeerId, StreamProtocol, Swarm, Transport,
@@ -59,17 +59,50 @@ pub async fn run() {
 
     let mut swarm = create_swarm(local_key, local_peer_id).unwrap();
 
+    // this is also a relay server
     let remote_peer_multiaddr =
         "/ip4/127.0.0.1/tcp/9091/ws/p2p/12D3KooWSTiScugFjjNxJcL7GqVvDHDvWkiSNYfRMZ2iFvXNZuiA"
             .parse::<Multiaddr>()
             .unwrap();
-    swarm.dial(remote_peer_multiaddr).unwrap();
+    swarm.dial(remote_peer_multiaddr.clone()).unwrap();
+
+    // As a relay client, learn our local public address from the relay server
+    // , and enable a freshly started relay to learn its public address
+    let mut learned_observed_addr = false;
+    let mut told_relay_observed_addr = false;
+    loop {
+        match swarm.next().await.unwrap() {
+            SwarmEvent::NewListenAddr { .. } => {}
+            SwarmEvent::Dialing { .. } => {}
+            SwarmEvent::ConnectionEstablished { .. } => {}
+            SwarmEvent::Behaviour(BehaviourEvent::Identify(identify::Event::Sent { .. })) => {
+                console_log!("Told relay its public address.");
+                told_relay_observed_addr = true;
+            }
+            SwarmEvent::Behaviour(BehaviourEvent::Identify(identify::Event::Received {
+                info: identify::Info { observed_addr, .. },
+                ..
+            })) => {
+                console_log!("Relay told us our public address: {:?}", observed_addr);
+                learned_observed_addr = true;
+            }
+            _ => {}
+        }
+
+        if learned_observed_addr && told_relay_observed_addr {
+            break;
+        }
+    }
+
+    // As a relay client,
+    let relay_address = remote_peer_multiaddr.with(Protocol::P2pCircuit);
+    swarm.listen_on(relay_address.clone()).unwrap();
+    console_log!("Listening via relay: {relay_address}");
 
     loop {
         match swarm.next().await.unwrap() {
             SwarmEvent::NewListenAddr { address, .. } => {
-                let p2p_address = address.with(Protocol::P2p((*swarm.local_peer_id()).into()));
-                console_log!("Listen p2p address: {p2p_address:?}");
+                console_log!("Listen p2p address: {address:?}");
             }
             SwarmEvent::ConnectionEstablished { peer_id, .. } => {
                 console_log!("Connected to {peer_id}");
@@ -81,6 +114,14 @@ pub async fn run() {
                 console_log!("Connection to {peer_id} closed: {cause:?}");
                 swarm.behaviour_mut().kademlia.remove_peer(&peer_id);
                 console_log!("Removed {peer_id} from the routing table (if it was in there).");
+            }
+            SwarmEvent::Behaviour(BehaviourEvent::RelayClient(
+                relay::client::Event::ReservationReqAccepted { relay_peer_id, .. },
+            )) => {
+                console_log!("Our reservation request accepted by relay:{relay_peer_id}");
+            }
+            SwarmEvent::Behaviour(BehaviourEvent::RelayClient(event)) => {
+                console_log!("RelayClient: {event:?}");
             }
             SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(
                 libp2p::gossipsub::Event::Message {
@@ -193,12 +234,34 @@ fn create_swarm(
 
     gossipsub.subscribe(&gossipsub::IdentTopic::new(GOSSIPSUB_TOPIC))?;
 
-    let transport = ExtTransport::new(websocket_transport())
-        .upgrade(upgrade::Version::V1)
-        .authenticate(noise::Config::new(&local_key).unwrap())
-        .multiplex(yamux::Config::default())
-        .timeout(Duration::from_secs(10))
-        .boxed();
+    let (relay_transport, relay_client) = relay::client::new(local_peer_id);
+
+    let transport = {
+        let ws_transport = ExtTransport::new(websocket_transport())
+            .upgrade(upgrade::Version::V1)
+            .authenticate(noise::Config::new(&local_key).unwrap())
+            .multiplex(yamux::Config::default())
+            .timeout(Duration::from_secs(10))
+            .boxed();
+
+        let relay_transport = relay_transport
+            .upgrade(upgrade::Version::V1)
+            .authenticate(noise::Config::new(&local_key).unwrap())
+            .multiplex(yamux::Config::default())
+            .boxed();
+
+        ws_transport
+            .or_transport(relay_transport)
+            .map(|fut, _| match fut {
+                futures::future::Either::Right((local_peer_id, conn)) => {
+                    (local_peer_id, StreamMuxerBox::new(conn))
+                }
+                futures::future::Either::Left((local_peer_id, conn)) => {
+                    (local_peer_id, StreamMuxerBox::new(conn))
+                }
+            })
+            .boxed()
+    };
 
     let identify = identify::Behaviour::new(
         identify::Config::new("/ipfs/0.1.0".into(), local_key.public())
@@ -215,6 +278,7 @@ fn create_swarm(
         identify,
         kademlia,
         keep_alive: keep_alive::Behaviour::default(),
+        relay_client,
     };
     Ok(SwarmBuilder::with_wasm_executor(transport, behaviour, local_peer_id).build())
 }
@@ -225,4 +289,5 @@ struct Behaviour {
     identify: identify::Behaviour,
     kademlia: Kademlia<MemoryStore>,
     keep_alive: keep_alive::Behaviour,
+    relay_client: relay::client::Behaviour,
 }
