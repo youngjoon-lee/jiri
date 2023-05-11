@@ -9,4 +9,4 @@ RUN rustup target add wasm32-unknown-unknown
 RUN ./trunk build
 
 EXPOSE 7070
-CMD ["trunk", "serve", "--port", "7070", "--address", "0.0.0.0"]
+CMD ["./trunk", "serve", "--port", "7070", "--address", "0.0.0.0"]
