@@ -30,6 +30,7 @@ pub struct JiriWebApp {
 
     remote_multiaddr: String,
     connected: bool,
+    my_peer_id: String,
     command_tx: Option<mpsc::UnboundedSender<command::Command>>,
     event_rx: Option<mpsc::UnboundedReceiver<event::Event>>,
 
@@ -45,6 +46,7 @@ impl Default for JiriWebApp {
             value: 2.7,
             remote_multiaddr: "".to_owned(),
             connected: false,
+            my_peer_id: "".to_owned(),
             command_tx: None,
             event_rx: None,
 
@@ -82,8 +84,10 @@ impl JiriWebApp {
 
     fn send_message(&mut self) {
         self.send_command(command::Command::SendMessage(self.message.clone()));
-        self.messages
-            .push_back((Color32::LIGHT_BLUE, self.message.clone()));
+        self.messages.push_back((
+            Color32::LIGHT_BLUE,
+            format!("{}: {}", truncate_peer_id(&self.my_peer_id), self.message),
+        ));
     }
 }
 
@@ -104,9 +108,15 @@ impl eframe::App for JiriWebApp {
         if let Some(event_rx) = &mut self.event_rx {
             while let Ok(Some(event)) = event_rx.try_next() {
                 match event {
-                    event::Event::Message(msg) => {
-                        console_log!("EVENT: MESSAGE: {}", msg.clone());
-                        self.messages.push_back((Color32::GREEN, msg.clone()));
+                    event::Event::Message {
+                        source_peer_id,
+                        text,
+                    } => {
+                        console_log!("EVENT: MESSAGE: {source_peer_id} {text}");
+                        self.messages.push_back((
+                            Color32::GREEN,
+                            format!("{}: {text}", truncate_peer_id(&source_peer_id)),
+                        ));
                     }
                     event::Event::Connected(multiaddr) => {
                         console_log!("EVENT: Connected to {multiaddr}");
@@ -134,8 +144,9 @@ impl eframe::App for JiriWebApp {
                 ui.text_edit_singleline(&mut self.remote_multiaddr);
                 if !self.connected {
                     if ui.button("Connect").clicked() {
-                        let (command_tx, event_rx) =
+                        let (peer_id, command_tx, event_rx) =
                             jiri_wasm::start_interactive(self.remote_multiaddr.clone());
+                        self.my_peer_id = peer_id;
                         self.command_tx = Some(command_tx);
                         self.event_rx = Some(event_rx);
                     }
@@ -143,6 +154,8 @@ impl eframe::App for JiriWebApp {
                     ui.label("Connected");
                 }
             });
+
+            ui.label(format!("My Peer ID: {}", self.my_peer_id));
         });
 
         // egui::SidePanel::left("side_panel").show(ctx, |ui| {
@@ -220,4 +233,8 @@ impl eframe::App for JiriWebApp {
         // Run 20 frames/sec
         ctx.request_repaint_after(Duration::from_millis(50));
     }
+}
+
+fn truncate_peer_id(peer_id: &String) -> String {
+    peer_id[peer_id.len() - 4..].to_owned()
 }

@@ -1,5 +1,8 @@
 #[derive(Debug)]
 pub enum Event {
-    Message(String),
+    Message {
+        source_peer_id: String,
+        text: String,
+    },
     Connected(String),
 }

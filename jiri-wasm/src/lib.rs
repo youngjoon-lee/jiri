@@ -48,13 +48,14 @@ const GOSSIPSUB_TOPIC: &str = "jiri";
 
 #[wasm_bindgen]
 pub fn start(remote_addr: String) {
-    let (_, _) = start_interactive(remote_addr);
+    let (_, _, _) = start_interactive(remote_addr);
     //TODO: Ignoring unbound channels may cause OOM.
 }
 
 pub fn start_interactive(
     remote_addr: String,
 ) -> (
+    String,
     mpsc::UnboundedSender<command::Command>,
     mpsc::UnboundedReceiver<event::Event>,
 ) {
@@ -62,25 +63,34 @@ pub fn start_interactive(
 
     let remote_multiaddr = remote_addr.parse::<Multiaddr>().unwrap();
 
-    let (command_tx, command_rx) = mpsc::unbounded();
-    let (event_tx, event_rx) = mpsc::unbounded();
-
-    spawn_local(async {
-        run(remote_multiaddr, command_rx, event_tx).await;
-    });
-
-    (command_tx, event_rx)
-}
-
-pub async fn run(
-    remote_multiaddr: Multiaddr,
-    mut command_rx: mpsc::UnboundedReceiver<command::Command>,
-    mut event_tx: mpsc::UnboundedSender<event::Event>,
-) {
     let local_key = identity::Keypair::generate_ed25519();
     let local_peer_id = PeerId::from(local_key.public());
     console_log!("Local peer id: {}", local_peer_id);
 
+    let (command_tx, command_rx) = mpsc::unbounded();
+    let (event_tx, event_rx) = mpsc::unbounded();
+
+    spawn_local(async move {
+        run(
+            remote_multiaddr,
+            local_key,
+            local_peer_id.clone(),
+            command_rx,
+            event_tx,
+        )
+        .await;
+    });
+
+    (local_peer_id.to_string(), command_tx, event_rx)
+}
+
+pub async fn run(
+    remote_multiaddr: Multiaddr,
+    local_key: identity::Keypair,
+    local_peer_id: PeerId,
+    mut command_rx: mpsc::UnboundedReceiver<command::Command>,
+    mut event_tx: mpsc::UnboundedSender<event::Event>,
+) {
     let mut swarm = create_swarm(local_key, local_peer_id).unwrap();
 
     // this is also a relay server
@@ -173,16 +183,22 @@ async fn handle_event<T: std::fmt::Debug>(
         }
         SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(libp2p::gossipsub::Event::Message {
             message_id: _,
-            propagation_source: _,
+            propagation_source,
             message,
         })) => {
-            let msg = String::from_utf8(message.data).unwrap();
+            let text = String::from_utf8(message.data).unwrap();
             console_log!(
                 "Received message from {:?}: {}",
                 message.source,
-                msg.clone()
+                text.clone()
             );
-            event_tx.send(event::Event::Message(msg)).await.unwrap();
+            event_tx
+                .send(event::Event::Message {
+                    source_peer_id: propagation_source.to_string(),
+                    text,
+                })
+                .await
+                .unwrap();
         }
         SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(
             libp2p::gossipsub::Event::Subscribed { peer_id, topic },
