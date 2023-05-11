@@ -39,6 +39,8 @@ jobs:
     - name: Build www
       working-directory: ./jiri-wasm/www
       run: npm i && npm run build
+    - name: Install trunk
+      run: cargo install --locked trunk
     - name: Build egui
       working-directory: ./jiri-wasm/egui
       run: trunk build
