@@ -185,7 +185,7 @@ async fn handle_event<T: std::fmt::Debug>(
         }
         SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(libp2p::gossipsub::Event::Message {
             message_id: _,
-            propagation_source,
+            propagation_source: _,
             message,
         })) => {
             let text = String::from_utf8(message.data).unwrap();
@@ -197,7 +197,9 @@ async fn handle_event<T: std::fmt::Debug>(
 
             if let Err(e) = event_tx
                 .send(event::Event::Message {
-                    source_peer_id: propagation_source.to_string(),
+                    source_peer_id: message
+                        .source
+                        .map_or("NONE".to_string(), |id| id.to_string()),
                     text,
                 })
                 .await

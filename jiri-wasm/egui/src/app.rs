@@ -44,7 +44,7 @@ impl Default for JiriWebApp {
             // Example stuff:
             label: "Hello World!".to_owned(),
             value: 2.7,
-            remote_multiaddr: "".to_owned(),
+            remote_multiaddr: "/ip4/43.200.34.14/tcp/9091/ws/p2p/12D3KooWGNBD6qTyFKZSFGp1qSsgbyTTA49vb6nCwM5XYcVsCdKR".to_owned(),
             connected: false,
             my_peer_id: "".to_owned(),
             command_tx: None,
