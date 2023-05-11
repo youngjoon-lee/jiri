@@ -1,3 +1,5 @@
+pub mod command;
+pub mod event;
 mod utils;
 
 extern crate alloc;
@@ -9,7 +11,8 @@ use std::{
     time::Duration,
 };
 
-use futures_util::StreamExt;
+use futures::channel::mpsc;
+use futures_util::{select, SinkExt, StreamExt};
 use libp2p::{
     core::{muxing::StreamMuxerBox, upgrade},
     gossipsub, identify, identity,
@@ -45,20 +48,48 @@ const GOSSIPSUB_TOPIC: &str = "jiri";
 
 #[wasm_bindgen]
 pub fn start(remote_addr: String) {
+    let (_, _, _) = start_interactive(remote_addr);
+}
+
+pub fn start_interactive(
+    remote_addr: String,
+) -> (
+    String,
+    mpsc::UnboundedSender<command::Command>,
+    mpsc::UnboundedReceiver<event::Event>,
+) {
     utils::set_panic_hook();
 
     let remote_multiaddr = remote_addr.parse::<Multiaddr>().unwrap();
 
-    spawn_local(async {
-        run(remote_multiaddr).await;
-    })
-}
-
-pub async fn run(remote_multiaddr: Multiaddr) {
     let local_key = identity::Keypair::generate_ed25519();
     let local_peer_id = PeerId::from(local_key.public());
     console_log!("Local peer id: {}", local_peer_id);
 
+    let (command_tx, command_rx) = mpsc::unbounded();
+    let (event_tx, event_rx) = mpsc::unbounded();
+
+    spawn_local(async move {
+        run(
+            remote_multiaddr,
+            local_key,
+            local_peer_id.clone(),
+            command_rx,
+            event_tx,
+        )
+        .await;
+    });
+
+    (local_peer_id.to_string(), command_tx, event_rx)
+}
+
+pub async fn run(
+    remote_multiaddr: Multiaddr,
+    local_key: identity::Keypair,
+    local_peer_id: PeerId,
+    mut command_rx: mpsc::UnboundedReceiver<command::Command>,
+    mut event_tx: mpsc::UnboundedSender<event::Event>,
+) {
     let mut swarm = create_swarm(local_key, local_peer_id).unwrap();
 
     // this is also a relay server
@@ -93,111 +124,146 @@ pub async fn run(remote_multiaddr: Multiaddr) {
     }
 
     // As a relay client,
-    let relay_address = remote_multiaddr.with(Protocol::P2pCircuit);
+    let relay_address = remote_multiaddr.clone().with(Protocol::P2pCircuit);
     swarm.listen_on(relay_address.clone()).unwrap();
     console_log!("Listening via relay: {relay_address}");
+    if let Err(e) = event_tx
+        .send(event::Event::Connected(remote_multiaddr.to_string()))
+        .await
+    {
+        // the channel may be closed from the other side.
+        console_log!("Failed to send to event_tx: {e:?}");
+    }
 
     loop {
-        match swarm.next().await.unwrap() {
-            SwarmEvent::NewListenAddr { address, .. } => {
-                console_log!("Listen p2p address: {address:?}");
-            }
-            SwarmEvent::ConnectionEstablished { peer_id, .. } => {
-                console_log!("Connected to {peer_id}");
-            }
-            SwarmEvent::OutgoingConnectionError { peer_id, error } => {
-                console_log!("Failed to dial {peer_id:?}: {error}");
-            }
-            SwarmEvent::ConnectionClosed { peer_id, cause, .. } => {
-                console_log!("Connection to {peer_id} closed: {cause:?}");
-                swarm.behaviour_mut().kademlia.remove_peer(&peer_id);
-                console_log!("Removed {peer_id} from the routing table (if it was in there).");
-            }
-            SwarmEvent::Behaviour(BehaviourEvent::RelayClient(
-                relay::client::Event::ReservationReqAccepted { relay_peer_id, .. },
-            )) => {
-                console_log!("Our reservation request accepted by relay:{relay_peer_id}");
-            }
-            SwarmEvent::Behaviour(BehaviourEvent::RelayClient(event)) => {
-                console_log!("RelayClient: {event:?}");
-            }
-            SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(
-                libp2p::gossipsub::Event::Message {
-                    message_id: _,
-                    propagation_source: _,
-                    message,
-                },
-            )) => {
-                console_log!(
-                    "Received message from {:?}: {}",
-                    message.source,
-                    String::from_utf8(message.data).unwrap()
-                );
-            }
-            SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(
-                libp2p::gossipsub::Event::Subscribed { peer_id, topic },
-            )) => {
-                console_log!("{peer_id} subscribed to {topic}");
-            }
-            SwarmEvent::Behaviour(BehaviourEvent::Identify(e)) => {
-                console_log!("BehaviourEvent::Identify {e:?}");
+        select! {
+            cmd = command_rx.select_next_some() => handle_command(&mut swarm, cmd),
+            event = swarm.select_next_some() => handle_event(&mut swarm, event, &mut event_tx).await,
+        }
+    }
+}
 
-                if let identify::Event::Error { peer_id, error } = e {
-                    match error {
-                        libp2p::swarm::StreamUpgradeError::Timeout => {
-                            // When a browser tab closes, we don't get a swarm event
-                            // maybe there's a way to get this with TransportEvent
-                            // but for now remove the peer from routing table if there's an Identify timeout
-                            swarm.behaviour_mut().kademlia.remove_peer(&peer_id);
-                            console_log!(
-                                "Removed {peer_id} from the routing table (if it was in there)."
-                            );
-                        }
-                        _ => {
-                            console_log!("StreamUpgradeError: {error}");
-                        }
+fn handle_command(swarm: &mut Swarm<Behaviour>, cmd: command::Command) {
+    match cmd {
+        command::Command::SendMessage(msg) => {
+            swarm
+                .behaviour_mut()
+                .gossipsub
+                .publish(gossipsub::IdentTopic::new(GOSSIPSUB_TOPIC), msg)
+                .unwrap();
+        }
+    }
+}
+
+async fn handle_event<T: std::fmt::Debug>(
+    swarm: &mut Swarm<Behaviour>,
+    swarm_event: SwarmEvent<BehaviourEvent, T>,
+    event_tx: &mut mpsc::UnboundedSender<event::Event>,
+) {
+    match swarm_event {
+        SwarmEvent::NewListenAddr { address, .. } => {
+            console_log!("Listen p2p address: {address:?}");
+        }
+        SwarmEvent::ConnectionEstablished { peer_id, .. } => {
+            console_log!("Connected to {peer_id}");
+        }
+        SwarmEvent::OutgoingConnectionError { peer_id, error } => {
+            console_log!("Failed to dial {peer_id:?}: {error}");
+        }
+        SwarmEvent::ConnectionClosed { peer_id, cause, .. } => {
+            console_log!("Connection to {peer_id} closed: {cause:?}");
+            swarm.behaviour_mut().kademlia.remove_peer(&peer_id);
+            console_log!("Removed {peer_id} from the routing table (if it was in there).");
+        }
+        SwarmEvent::Behaviour(BehaviourEvent::RelayClient(
+            relay::client::Event::ReservationReqAccepted { relay_peer_id, .. },
+        )) => {
+            console_log!("Our reservation request accepted by relay:{relay_peer_id}");
+        }
+        SwarmEvent::Behaviour(BehaviourEvent::RelayClient(event)) => {
+            console_log!("RelayClient: {event:?}");
+        }
+        SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(libp2p::gossipsub::Event::Message {
+            message_id: _,
+            propagation_source,
+            message,
+        })) => {
+            let text = String::from_utf8(message.data).unwrap();
+            console_log!(
+                "Received message from {:?}: {}",
+                message.source,
+                text.clone()
+            );
+
+            if let Err(e) = event_tx
+                .send(event::Event::Message {
+                    source_peer_id: propagation_source.to_string(),
+                    text,
+                })
+                .await
+            {
+                // the channel may be closed from the other side.
+                console_log!("Failed to send to event_tx: {e:?}");
+            }
+        }
+        SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(
+            libp2p::gossipsub::Event::Subscribed { peer_id, topic },
+        )) => {
+            console_log!("{peer_id} subscribed to {topic}");
+        }
+        SwarmEvent::Behaviour(BehaviourEvent::Identify(e)) => {
+            console_log!("BehaviourEvent::Identify {e:?}");
+
+            if let identify::Event::Error { peer_id, error } = e {
+                match error {
+                    libp2p::swarm::StreamUpgradeError::Timeout => {
+                        // When a browser tab closes, we don't get a swarm event
+                        // maybe there's a way to get this with TransportEvent
+                        // but for now remove the peer from routing table if there's an Identify timeout
+                        swarm.behaviour_mut().kademlia.remove_peer(&peer_id);
+                        console_log!(
+                            "Removed {peer_id} from the routing table (if it was in there)."
+                        );
                     }
-                } else if let identify::Event::Received {
-                    peer_id,
-                    info:
-                        identify::Info {
-                            listen_addrs,
-                            protocols,
-                            observed_addr,
-                            ..
-                        },
-                } = e
+                    _ => {
+                        console_log!("StreamUpgradeError: {error}");
+                    }
+                }
+            } else if let identify::Event::Received {
+                peer_id,
+                info:
+                    identify::Info {
+                        listen_addrs,
+                        protocols,
+                        observed_addr,
+                        ..
+                    },
+            } = e
+            {
+                console_log!("identify::Event::Received observed_addr: {observed_addr}");
+
+                swarm.add_external_address(observed_addr, AddressScore::Infinite);
+
+                if protocols
+                    .iter()
+                    .any(|p| p.to_string() == KADEMLIA_PROTOCOL_NAME)
                 {
-                    console_log!("identify::Event::Received observed_addr: {observed_addr}");
-
-                    swarm.add_external_address(observed_addr, AddressScore::Infinite);
-
-                    if protocols
-                        .iter()
-                        .any(|p| p.to_string() == KADEMLIA_PROTOCOL_NAME)
-                    {
-                        for addr in listen_addrs {
-                            console_log!("identify::Event::Received listen addr: {addr}");
-                            swarm
-                                .behaviour_mut()
-                                .kademlia
-                                .add_address(&peer_id, addr.clone());
-
-                            swarm
-                                .behaviour_mut()
-                                .kademlia
-                                .add_address(&peer_id, addr.clone());
-                            console_log!("Added {addr} to the routing table.");
-                        }
+                    for addr in listen_addrs {
+                        console_log!("identify::Event::Received listen addr: {addr}");
+                        swarm
+                            .behaviour_mut()
+                            .kademlia
+                            .add_address(&peer_id, addr.clone());
+                        console_log!("Added {addr} to the routing table.");
                     }
                 }
             }
-            SwarmEvent::Behaviour(BehaviourEvent::Kademlia(e)) => {
-                console_log!("Kademlia event: {e:?}");
-            }
-            event => {
-                console_log!("Other type of event: {event:?}");
-            }
+        }
+        SwarmEvent::Behaviour(BehaviourEvent::Kademlia(e)) => {
+            console_log!("Kademlia event: {e:?}");
+        }
+        event => {
+            console_log!("Other type of event: {event:?}");
         }
     }
 }
