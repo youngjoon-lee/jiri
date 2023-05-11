@@ -7,8 +7,8 @@ rust-version = "1.65"
 
 
 [dependencies]
-egui = "0.21.0"
-eframe = { version = "0.21.0", default-features = false, features = [
+egui = { git = "https://github.com/youngjoon-lee/egui.git", branch = "upgrade-wasm-bindgen" }
+eframe = { git = "https://github.com/youngjoon-lee/egui.git", branch = "upgrade-wasm-bindgen", default-features = false, features = [
     "accesskit",     # Make egui comptaible with screen readers. NOTE: adds a lot of dependencies.
     "default_fonts", # Embed the default egui fonts.
     "glow",          # Use the glow rendering backend. Alternative: "wgpu".
@@ -27,6 +27,7 @@ tracing-subscriber = "0.3"
 console_error_panic_hook = "0.1.6"
 tracing-wasm = "0.2"
 wasm-bindgen-futures = "0.4"
+jiri-wasm = { path = ".." }
 
 
 [profile.release]
