@@ -21,7 +21,7 @@ jobs:
       - name: Run tests
         run: cargo test -v
   
-  build-jiri-wasm:
+  build-jiri-wasm-www:
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -39,10 +39,17 @@ jobs:
     - name: Build www
       working-directory: ./jiri-wasm/www
       run: npm i && npm run build
+
+  build-jiri-wasm-egui:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./jiri-wasm/egui
+    steps:
+    - uses: actions/checkout@v3
     - name: Install trunk
       run: cargo install --locked trunk
     - name: Build egui
-      working-directory: ./jiri-wasm/egui
       run: trunk build
 
   build-jiri-web:
