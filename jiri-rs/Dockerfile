@@ -7,4 +7,5 @@ FROM debian:bullseye-slim
 RUN apt-get update && apt-get install && rm -rf /var/lib/apt/lists/*
 COPY --from=builder /usr/local/cargo/bin/jiri-rs /usr/local/bin/jiri-rs
 WORKDIR /data
+EXPOSE 9090 9091
 CMD ["jiri-rs"]
