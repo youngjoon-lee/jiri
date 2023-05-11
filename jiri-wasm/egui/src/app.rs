@@ -195,7 +195,10 @@ impl eframe::App for JiriWebApp {
 
         egui::TopBottomPanel::bottom("bottom_panel").show(ctx, |ui| {
             ui.horizontal(|ui| {
-                ui.text_edit_singleline(&mut self.message);
+                let resp = ui.text_edit_singleline(&mut self.message);
+                if resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                    self.send_message();
+                }
 
                 if ui.button("Send").clicked() {
                     self.send_message();
