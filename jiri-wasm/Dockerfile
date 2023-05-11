@@ -9,12 +9,12 @@ RUN rustup target add wasm32-unknown-unknown
 RUN ./trunk build --release
 
 FROM node:20-bullseye-slim
-RUN apt-get update && apt-get install && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y xsel && rm -rf /var/lib/apt/lists/*
 
 RUN npm install --global serve
 
 WORKDIR /data
-COPY --from=builder /usr/src/jiri-wasm/egui/dist .
+COPY --from=builder /usr/src/jiri-wasm/egui/dist ./dist
 
 EXPOSE 7070
-CMD ["serve", "-p", "7070", "dist"]
+CMD ["serve", "-p", "7070", "./dist"]
