@@ -43,12 +43,12 @@ impl Default for JiriWebApp {
             // Example stuff:
             label: "Hello World!".to_owned(),
             value: 2.7,
-            remote_multiaddr: "/ip4/...".to_owned(),
+            remote_multiaddr: "".to_owned(),
             connected: false,
             command_tx: None,
             event_rx: None,
 
-            message: "Type message...".to_owned(),
+            message: "".to_owned(),
             messages: Default::default(),
         }
     }
@@ -65,6 +65,8 @@ impl JiriWebApp {
         // if let Some(storage) = cc.storage {
         //     return eframe::get_value(storage, eframe::APP_KEY).unwrap_or_default();
         // }
+
+        cc.egui_ctx.set_visuals(egui::Visuals::dark());
 
         Default::default()
     }
