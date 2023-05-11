@@ -1,0 +1,6 @@
+.git/
+.github/
+www/
+pkg/
+target/
+dist/
