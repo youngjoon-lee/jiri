@@ -140,9 +140,9 @@ impl eframe::App for JiriWebApp {
             ui.heading("JIRI WASM Web");
 
             ui.horizontal(|ui| {
-                ui.label("A multiaddr to connect to: ");
-                ui.text_edit_singleline(&mut self.remote_multiaddr);
                 if !self.connected {
+                    ui.label("A multiaddr to connect to: ");
+                    ui.text_edit_singleline(&mut self.remote_multiaddr);
                     if ui.button("Connect").clicked() {
                         let (peer_id, command_tx, event_rx) =
                             jiri_wasm::start_interactive(self.remote_multiaddr.clone());
@@ -151,7 +151,7 @@ impl eframe::App for JiriWebApp {
                         self.event_rx = Some(event_rx);
                     }
                 } else {
-                    ui.label("Connected");
+                    ui.label(format!("Connected to {}", self.remote_multiaddr));
                 }
             });
 
@@ -188,13 +188,17 @@ impl eframe::App for JiriWebApp {
 
         egui::TopBottomPanel::bottom("bottom_panel").show(ctx, |ui| {
             ui.horizontal(|ui| {
-                let resp = ui.text_edit_singleline(&mut self.message);
-                if resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                    self.send_message();
-                }
+                if self.connected {
+                    let resp = ui.text_edit_singleline(&mut self.message);
+                    if resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                        self.send_message();
+                    }
 
-                if ui.button("Send").clicked() {
-                    self.send_message();
+                    if ui.button("Send").clicked() {
+                        self.send_message();
+                    }
+                } else {
+                    ui.label("Connect to a remote peer to start sending messages.");
                 }
             });
 
