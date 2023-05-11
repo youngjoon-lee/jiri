@@ -1,4 +1,4 @@
-FROM rust:1.68
+FROM rust:1.68 AS builder
 
 WORKDIR /usr/src/jiri-wasm
 COPY . .
@@ -8,5 +8,13 @@ RUN wget -qO- https://github.com/thedodd/trunk/releases/download/v0.16.0/trunk-x
 RUN rustup target add wasm32-unknown-unknown
 RUN ./trunk build --release
 
+FROM node:20-bullseye-slim
+RUN apt-get update && apt-get install && rm -rf /var/lib/apt/lists/*
+
+RUN npm install --global serve
+
+WORKDIR /data
+COPY --from=builder /usr/src/jiri-wasm/egui/dist .
+
 EXPOSE 7070
-CMD ["./trunk", "serve", "--port", "7070", "--address", "0.0.0.0"]
+CMD ["serve", "-port", "7070", "dist"]
