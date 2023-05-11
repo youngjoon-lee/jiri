@@ -42,12 +42,12 @@ impl JiriWebApp {
 
         // Load previous app state (if any).
         // Note that you must enable the `persistence` feature for this to work.
-        if let Some(storage) = cc.storage {
-            return eframe::get_value(storage, eframe::APP_KEY).unwrap_or_default();
-        }
+        // if let Some(storage) = cc.storage {
+        //     return eframe::get_value(storage, eframe::APP_KEY).unwrap_or_default();
+        // }
 
         jiri_wasm::start(
-            "/ip4/127.0.0.1/tcp/9091/ws/p2p/12D3KooWSTiScugFjjNxJcL7GqVvDHDvWkiSNYfRMZ2iFvXNZuiA"
+            "/ip4/172.30.1.25/tcp/9091/ws/p2p/12D3KooWSTiScugFjjNxJcL7GqVvDHDvWkiSNYfRMZ2iFvXNZuiA"
                 .to_string(),
         );
 
