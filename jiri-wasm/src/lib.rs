@@ -125,111 +125,123 @@ pub async fn run(
 
     loop {
         select! {
-            cmd = command_rx.select_next_some() => {
-                match cmd {
-                    command::Command::SendMessage(msg) => {
-                        swarm.behaviour_mut().gossipsub.publish(gossipsub::IdentTopic::new(GOSSIPSUB_TOPIC), msg).unwrap();
-                    }
-                }
-            }
-            event = swarm.select_next_some() => {
-                match event {
-                    SwarmEvent::NewListenAddr { address, .. } => {
-                        console_log!("Listen p2p address: {address:?}");
-                    }
-                    SwarmEvent::ConnectionEstablished { peer_id, .. } => {
-                        console_log!("Connected to {peer_id}");
-                    }
-                    SwarmEvent::OutgoingConnectionError { peer_id, error } => {
-                        console_log!("Failed to dial {peer_id:?}: {error}");
-                    }
-                    SwarmEvent::ConnectionClosed { peer_id, cause, .. } => {
-                        console_log!("Connection to {peer_id} closed: {cause:?}");
+            cmd = command_rx.select_next_some() => handle_command(&mut swarm, cmd),
+            event = swarm.select_next_some() => handle_event(&mut swarm, event, &mut event_tx).await,
+        }
+    }
+}
+
+fn handle_command(swarm: &mut Swarm<Behaviour>, cmd: command::Command) {
+    match cmd {
+        command::Command::SendMessage(msg) => {
+            swarm
+                .behaviour_mut()
+                .gossipsub
+                .publish(gossipsub::IdentTopic::new(GOSSIPSUB_TOPIC), msg)
+                .unwrap();
+        }
+    }
+}
+
+async fn handle_event<T: std::fmt::Debug>(
+    swarm: &mut Swarm<Behaviour>,
+    swarm_event: SwarmEvent<BehaviourEvent, T>,
+    event_tx: &mut mpsc::UnboundedSender<event::Event>,
+) {
+    match swarm_event {
+        SwarmEvent::NewListenAddr { address, .. } => {
+            console_log!("Listen p2p address: {address:?}");
+        }
+        SwarmEvent::ConnectionEstablished { peer_id, .. } => {
+            console_log!("Connected to {peer_id}");
+        }
+        SwarmEvent::OutgoingConnectionError { peer_id, error } => {
+            console_log!("Failed to dial {peer_id:?}: {error}");
+        }
+        SwarmEvent::ConnectionClosed { peer_id, cause, .. } => {
+            console_log!("Connection to {peer_id} closed: {cause:?}");
+            swarm.behaviour_mut().kademlia.remove_peer(&peer_id);
+            console_log!("Removed {peer_id} from the routing table (if it was in there).");
+        }
+        SwarmEvent::Behaviour(BehaviourEvent::RelayClient(
+            relay::client::Event::ReservationReqAccepted { relay_peer_id, .. },
+        )) => {
+            console_log!("Our reservation request accepted by relay:{relay_peer_id}");
+        }
+        SwarmEvent::Behaviour(BehaviourEvent::RelayClient(event)) => {
+            console_log!("RelayClient: {event:?}");
+        }
+        SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(libp2p::gossipsub::Event::Message {
+            message_id: _,
+            propagation_source: _,
+            message,
+        })) => {
+            let msg = String::from_utf8(message.data).unwrap();
+            console_log!(
+                "Received message from {:?}: {}",
+                message.source,
+                msg.clone()
+            );
+            event_tx.send(event::Event::Message(msg)).await.unwrap();
+        }
+        SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(
+            libp2p::gossipsub::Event::Subscribed { peer_id, topic },
+        )) => {
+            console_log!("{peer_id} subscribed to {topic}");
+        }
+        SwarmEvent::Behaviour(BehaviourEvent::Identify(e)) => {
+            console_log!("BehaviourEvent::Identify {e:?}");
+
+            if let identify::Event::Error { peer_id, error } = e {
+                match error {
+                    libp2p::swarm::StreamUpgradeError::Timeout => {
+                        // When a browser tab closes, we don't get a swarm event
+                        // maybe there's a way to get this with TransportEvent
+                        // but for now remove the peer from routing table if there's an Identify timeout
                         swarm.behaviour_mut().kademlia.remove_peer(&peer_id);
-                        console_log!("Removed {peer_id} from the routing table (if it was in there).");
-                    }
-                    SwarmEvent::Behaviour(BehaviourEvent::RelayClient(
-                        relay::client::Event::ReservationReqAccepted { relay_peer_id, .. },
-                    )) => {
-                        console_log!("Our reservation request accepted by relay:{relay_peer_id}");
-                    }
-                    SwarmEvent::Behaviour(BehaviourEvent::RelayClient(event)) => {
-                        console_log!("RelayClient: {event:?}");
-                    }
-                    SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(libp2p::gossipsub::Event::Message {
-                        message_id: _,
-                        propagation_source: _,
-                        message,
-                    })) => {
-                        let msg = String::from_utf8(message.data).unwrap();
                         console_log!(
-                            "Received message from {:?}: {}",
-                            message.source,
-                            msg.clone()
+                            "Removed {peer_id} from the routing table (if it was in there)."
                         );
-                        event_tx.send(event::Event::Message(msg)).await.unwrap();
                     }
-                    SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(
-                        libp2p::gossipsub::Event::Subscribed { peer_id, topic },
-                    )) => {
-                        console_log!("{peer_id} subscribed to {topic}");
+                    _ => {
+                        console_log!("StreamUpgradeError: {error}");
                     }
-                    SwarmEvent::Behaviour(BehaviourEvent::Identify(e)) => {
-                        console_log!("BehaviourEvent::Identify {e:?}");
+                }
+            } else if let identify::Event::Received {
+                peer_id,
+                info:
+                    identify::Info {
+                        listen_addrs,
+                        protocols,
+                        observed_addr,
+                        ..
+                    },
+            } = e
+            {
+                console_log!("identify::Event::Received observed_addr: {observed_addr}");
 
-                        if let identify::Event::Error { peer_id, error } = e {
-                            match error {
-                                libp2p::swarm::StreamUpgradeError::Timeout => {
-                                    // When a browser tab closes, we don't get a swarm event
-                                    // maybe there's a way to get this with TransportEvent
-                                    // but for now remove the peer from routing table if there's an Identify timeout
-                                    swarm.behaviour_mut().kademlia.remove_peer(&peer_id);
-                                    console_log!(
-                                        "Removed {peer_id} from the routing table (if it was in there)."
-                                    );
-                                }
-                                _ => {
-                                    console_log!("StreamUpgradeError: {error}");
-                                }
-                            }
-                        } else if let identify::Event::Received {
-                            peer_id,
-                            info:
-                                identify::Info {
-                                    listen_addrs,
-                                    protocols,
-                                    observed_addr,
-                                    ..
-                                },
-                        } = e
-                        {
-                            console_log!("identify::Event::Received observed_addr: {observed_addr}");
+                swarm.add_external_address(observed_addr, AddressScore::Infinite);
 
-                            swarm.add_external_address(observed_addr, AddressScore::Infinite);
-
-                            if protocols
-                                .iter()
-                                .any(|p| p.to_string() == KADEMLIA_PROTOCOL_NAME)
-                            {
-                                for addr in listen_addrs {
-                                    console_log!("identify::Event::Received listen addr: {addr}");
-                                    swarm
-                                        .behaviour_mut()
-                                        .kademlia
-                                        .add_address(&peer_id, addr.clone());
-                                    console_log!("Added {addr} to the routing table.");
-                                }
-                            }
-                        }
-                    }
-                    SwarmEvent::Behaviour(BehaviourEvent::Kademlia(e)) => {
-                        console_log!("Kademlia event: {e:?}");
-                    }
-                    event => {
-                        console_log!("Other type of event: {event:?}");
+                if protocols
+                    .iter()
+                    .any(|p| p.to_string() == KADEMLIA_PROTOCOL_NAME)
+                {
+                    for addr in listen_addrs {
+                        console_log!("identify::Event::Received listen addr: {addr}");
+                        swarm
+                            .behaviour_mut()
+                            .kademlia
+                            .add_address(&peer_id, addr.clone());
+                        console_log!("Added {addr} to the routing table.");
                     }
                 }
             }
+        }
+        SwarmEvent::Behaviour(BehaviourEvent::Kademlia(e)) => {
+            console_log!("Kademlia event: {e:?}");
+        }
+        event => {
+            console_log!("Other type of event: {event:?}");
         }
     }
 }
