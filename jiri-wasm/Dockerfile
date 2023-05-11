@@ -17,4 +17,4 @@ WORKDIR /data
 COPY --from=builder /usr/src/jiri-wasm/egui/dist .
 
 EXPOSE 7070
-CMD ["serve", "-port", "7070", "dist"]
+CMD ["serve", "-p", "7070", "dist"]
