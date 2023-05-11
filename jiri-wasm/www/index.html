@@ -8,7 +8,12 @@
     <noscript>This page contains webassembly and javascript content, please enable javascript in your browser.</noscript>
     <script src="./bootstrap.js"></script>
     <div>
-      <p>See console logs...</p>
+      <label>A multiaddr to connect to: </label>
+      <input type="text" id="remote-multiaddr">
+      <button id="connect-to-remote-multiaddr">Connect</button>
+    </div>
+    <div>
+      <p id="status"></p>
     </div>
   </body>
 </html>

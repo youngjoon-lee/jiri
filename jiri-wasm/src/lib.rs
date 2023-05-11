@@ -43,16 +43,18 @@ macro_rules! console_log {
 const KADEMLIA_PROTOCOL_NAME: &str = "/jiri/lan/kad/1.0.0";
 const GOSSIPSUB_TOPIC: &str = "jiri";
 
-#[wasm_bindgen(start)]
-pub fn start() {
+#[wasm_bindgen]
+pub fn start(remote_addr: String) {
     utils::set_panic_hook();
 
+    let remote_multiaddr = remote_addr.parse::<Multiaddr>().unwrap();
+
     spawn_local(async {
-        run().await;
+        run(remote_multiaddr).await;
     })
 }
 
-pub async fn run() {
+pub async fn run(remote_multiaddr: Multiaddr) {
     let local_key = identity::Keypair::generate_ed25519();
     let local_peer_id = PeerId::from(local_key.public());
     console_log!("Local peer id: {}", local_peer_id);
@@ -60,11 +62,7 @@ pub async fn run() {
     let mut swarm = create_swarm(local_key, local_peer_id).unwrap();
 
     // this is also a relay server
-    let remote_peer_multiaddr =
-        "/ip4/127.0.0.1/tcp/9091/ws/p2p/12D3KooWSTiScugFjjNxJcL7GqVvDHDvWkiSNYfRMZ2iFvXNZuiA"
-            .parse::<Multiaddr>()
-            .unwrap();
-    swarm.dial(remote_peer_multiaddr.clone()).unwrap();
+    swarm.dial(remote_multiaddr.clone()).unwrap();
 
     // As a relay client, learn our local public address from the relay server
     // , and enable a freshly started relay to learn its public address
@@ -95,7 +93,7 @@ pub async fn run() {
     }
 
     // As a relay client,
-    let relay_address = remote_peer_multiaddr.with(Protocol::P2pCircuit);
+    let relay_address = remote_multiaddr.with(Protocol::P2pCircuit);
     swarm.listen_on(relay_address.clone()).unwrap();
     console_log!("Listening via relay: {relay_address}");
 
