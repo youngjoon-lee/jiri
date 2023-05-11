@@ -1,9 +1,10 @@
-use std::time::Duration;
+use std::{collections::VecDeque, time::Duration};
 
-use egui::TextBuffer;
-use futures::channel::mpsc;
+use egui::{Color32, RichText};
+use futures::{channel::mpsc, SinkExt};
 use jiri_wasm::{self, command, event};
 use wasm_bindgen::prelude::wasm_bindgen;
+use wasm_bindgen_futures::spawn_local;
 
 // Debugging console log.
 #[wasm_bindgen]
@@ -31,6 +32,9 @@ pub struct JiriWebApp {
     connected: bool,
     command_tx: Option<mpsc::UnboundedSender<command::Command>>,
     event_rx: Option<mpsc::UnboundedReceiver<event::Event>>,
+
+    message: String,
+    messages: VecDeque<(Color32, String)>,
 }
 
 impl Default for JiriWebApp {
@@ -43,6 +47,9 @@ impl Default for JiriWebApp {
             connected: false,
             command_tx: None,
             event_rx: None,
+
+            message: "Type message...".to_owned(),
+            messages: Default::default(),
         }
     }
 }
@@ -60,6 +67,21 @@ impl JiriWebApp {
         // }
 
         Default::default()
+    }
+
+    fn send_command(&self, cmd: command::Command) {
+        if let Some(command_tx) = &self.command_tx {
+            let mut tx = command_tx.clone();
+            spawn_local(async move {
+                let _ = tx.send(cmd).await;
+            });
+        }
+    }
+
+    fn send_message(&mut self) {
+        self.send_command(command::Command::SendMessage(self.message.clone()));
+        self.messages
+            .push_back((Color32::LIGHT_BLUE, self.message.clone()));
     }
 }
 
@@ -81,7 +103,8 @@ impl eframe::App for JiriWebApp {
             while let Ok(Some(event)) = event_rx.try_next() {
                 match event {
                     event::Event::Message(msg) => {
-                        console_log!("EVENT: MESSAGE: {msg}");
+                        console_log!("EVENT: MESSAGE: {}", msg.clone());
+                        self.messages.push_back((Color32::GREEN, msg.clone()));
                     }
                     event::Event::Connected(multiaddr) => {
                         console_log!("EVENT: Connected to {multiaddr}");
@@ -151,13 +174,33 @@ impl eframe::App for JiriWebApp {
         egui::CentralPanel::default().show(ctx, |ui| {
             // The central panel the region left after adding TopPanel's and SidePanel's
 
-            ui.heading("eframe template");
-            ui.hyperlink("https://github.com/emilk/eframe_template");
-            ui.add(egui::github_link_file!(
-                "https://github.com/emilk/eframe_template/blob/master/",
-                "Source code."
-            ));
-            egui::warn_if_debug_build(ui);
+            // ui.heading("eframe template");
+            // ui.hyperlink("https://github.com/emilk/eframe_template");
+            // ui.add(egui::github_link_file!(
+            //     "https://github.com/emilk/eframe_template/blob/master/",
+            //     "Source code."
+            // ));
+            // egui::warn_if_debug_build(ui);
+
+            egui::ScrollArea::vertical()
+                .auto_shrink([false; 2])
+                .stick_to_bottom(true)
+                .show(ui, |ui| {
+                    for (color, msg) in &self.messages {
+                        ui.label(RichText::new(msg).color(*color));
+                    }
+                    ui.allocate_space(ui.available_size());
+                });
+        });
+
+        egui::TopBottomPanel::bottom("bottom_panel").show(ctx, |ui| {
+            ui.horizontal(|ui| {
+                ui.text_edit_singleline(&mut self.message);
+
+                if ui.button("Send").clicked() {
+                    self.send_message();
+                }
+            });
         });
 
         if false {
