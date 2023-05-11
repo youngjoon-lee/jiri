@@ -1046,6 +1046,7 @@ dependencies = [
  "console_error_panic_hook",
  "eframe",
  "egui",
+ "futures",
  "jiri-wasm",
  "serde",
  "tracing-wasm",

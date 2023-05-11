@@ -1,4 +1,8 @@
-use jiri_wasm;
+use std::time::Duration;
+
+use egui::TextBuffer;
+use futures::channel::mpsc;
+use jiri_wasm::{self, command, event};
 use wasm_bindgen::prelude::wasm_bindgen;
 
 // Debugging console log.
@@ -13,15 +17,20 @@ macro_rules! console_log {
 }
 
 /// We derive Deserialize/Serialize so we can persist app state on shutdown.
-#[derive(serde::Deserialize, serde::Serialize)]
-#[serde(default)] // if we add new fields, give them default values when deserializing old state
+// #[derive(serde::Deserialize, serde::Serialize)]
+// #[serde(default)] // if we add new fields, give them default values when deserializing old state
 pub struct JiriWebApp {
     // Example stuff:
     label: String,
 
     // this how you opt-out of serialization of a member
-    #[serde(skip)]
+    // #[serde(skip)]
     value: f32,
+
+    remote_multiaddr: String,
+    connected: bool,
+    command_tx: Option<mpsc::UnboundedSender<command::Command>>,
+    event_rx: Option<mpsc::UnboundedReceiver<event::Event>>,
 }
 
 impl Default for JiriWebApp {
@@ -30,6 +39,10 @@ impl Default for JiriWebApp {
             // Example stuff:
             label: "Hello World!".to_owned(),
             value: 2.7,
+            remote_multiaddr: "/ip4/...".to_owned(),
+            connected: false,
+            command_tx: None,
+            event_rx: None,
         }
     }
 }
@@ -46,70 +59,94 @@ impl JiriWebApp {
         //     return eframe::get_value(storage, eframe::APP_KEY).unwrap_or_default();
         // }
 
-        jiri_wasm::start(
-            "/ip4/172.30.1.25/tcp/9091/ws/p2p/12D3KooWSTiScugFjjNxJcL7GqVvDHDvWkiSNYfRMZ2iFvXNZuiA"
-                .to_string(),
-        );
-
         Default::default()
     }
 }
 
 impl eframe::App for JiriWebApp {
     /// Called by the frame work to save state before shutdown.
-    fn save(&mut self, storage: &mut dyn eframe::Storage) {
-        eframe::set_value(storage, eframe::APP_KEY, self);
-    }
+    // fn save(&mut self, storage: &mut dyn eframe::Storage) {
+    //     eframe::set_value(storage, eframe::APP_KEY, self);
+    // }
 
     /// Called each time the UI needs repainting, which may be many times per second.
     /// Put your widgets into a `SidePanel`, `TopPanel`, `CentralPanel`, `Window` or `Area`.
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        let Self { label, value } = self;
-
         // Examples of how to create different panels and windows.
         // Pick whichever suits you.
         // Tip: a good default choice is to just keep the `CentralPanel`.
         // For inspiration and more examples, go to https://emilk.github.io/egui
 
-        #[cfg(not(target_arch = "wasm32"))] // no File->Quit on web pages!
+        if let Some(event_rx) = &mut self.event_rx {
+            while let Ok(Some(event)) = event_rx.try_next() {
+                match event {
+                    event::Event::Message(msg) => {
+                        console_log!("EVENT: MESSAGE: {msg}");
+                    }
+                    event::Event::Connected(multiaddr) => {
+                        console_log!("EVENT: Connected to {multiaddr}");
+                        self.connected = true;
+                    }
+                }
+            }
+        }
+
+        // #[cfg(not(target_arch = "wasm32"))] // no File->Quit on web pages!
         egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
             // The top panel is often a good place for a menu bar:
-            egui::menu::bar(ui, |ui| {
-                ui.menu_button("File", |ui| {
-                    if ui.button("Quit").clicked() {
-                        _frame.close();
-                    }
-                });
-            });
-        });
+            // egui::menu::bar(ui, |ui| {
+            //     ui.menu_button("File", |ui| {
+            //         if ui.button("Quit").clicked() {
+            //             _frame.close();
+            //         }
+            //     });
+            // });
 
-        egui::SidePanel::left("side_panel").show(ctx, |ui| {
-            ui.heading("Side Panel");
+            ui.heading("JIRI WASM Web");
 
             ui.horizontal(|ui| {
-                ui.label("Write something: ");
-                ui.text_edit_singleline(label);
-            });
-
-            ui.add(egui::Slider::new(value, 0.0..=10.0).text("value"));
-            if ui.button("Increment").clicked() {
-                *value += 1.0;
-            }
-
-            ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
-                ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = 0.0;
-                    ui.label("powered by ");
-                    ui.hyperlink_to("egui", "https://github.com/emilk/egui");
-                    ui.label(" and ");
-                    ui.hyperlink_to(
-                        "eframe",
-                        "https://github.com/emilk/egui/tree/master/crates/eframe",
-                    );
-                    ui.label(".");
-                });
+                ui.label("A multiaddr to connect to: ");
+                ui.text_edit_singleline(&mut self.remote_multiaddr);
+                if !self.connected {
+                    if ui.button("Connect").clicked() {
+                        let (command_tx, event_rx) =
+                            jiri_wasm::start_interactive(self.remote_multiaddr.clone());
+                        self.command_tx = Some(command_tx);
+                        self.event_rx = Some(event_rx);
+                    }
+                } else {
+                    ui.label("Connected");
+                }
             });
         });
+
+        // egui::SidePanel::left("side_panel").show(ctx, |ui| {
+        //     ui.heading("Side Panel");
+        //
+        //     ui.horizontal(|ui| {
+        //         ui.label("Write something: ");
+        //         ui.text_edit_singleline(&mut self.label);
+        //     });
+        //
+        //     ui.add(egui::Slider::new(&mut self.value, 0.0..=10.0).text("value"));
+        //     if ui.button("Increment").clicked() {
+        //         self.value += 1.0;
+        //     }
+        //
+        //     ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
+        //         ui.horizontal(|ui| {
+        //             ui.spacing_mut().item_spacing.x = 0.0;
+        //             ui.label("powered by ");
+        //             ui.hyperlink_to("egui", "https://github.com/emilk/egui");
+        //             ui.label(" and ");
+        //             ui.hyperlink_to(
+        //                 "eframe",
+        //                 "https://github.com/emilk/egui/tree/master/crates/eframe",
+        //             );
+        //             ui.label(".");
+        //         });
+        //     });
+        // });
 
         egui::CentralPanel::default().show(ctx, |ui| {
             // The central panel the region left after adding TopPanel's and SidePanel's
@@ -131,5 +168,8 @@ impl eframe::App for JiriWebApp {
                 ui.label("You would normally choose either panels OR windows.");
             });
         }
+
+        // Run 20 frames/sec
+        ctx.request_repaint_after(Duration::from_millis(50));
     }
 }

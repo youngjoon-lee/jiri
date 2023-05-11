@@ -1,3 +1,5 @@
+pub mod command;
+pub mod event;
 mod utils;
 
 extern crate alloc;
@@ -9,7 +11,8 @@ use std::{
     time::Duration,
 };
 
-use futures_util::StreamExt;
+use futures::channel::mpsc;
+use futures_util::{SinkExt, StreamExt};
 use libp2p::{
     core::{muxing::StreamMuxerBox, upgrade},
     gossipsub, identify, identity,
@@ -45,16 +48,35 @@ const GOSSIPSUB_TOPIC: &str = "jiri";
 
 #[wasm_bindgen]
 pub fn start(remote_addr: String) {
+    let (_, _) = start_interactive(remote_addr);
+    //TODO: Ignoring unbound channels may cause OOM.
+}
+
+pub fn start_interactive(
+    remote_addr: String,
+) -> (
+    mpsc::UnboundedSender<command::Command>,
+    mpsc::UnboundedReceiver<event::Event>,
+) {
     utils::set_panic_hook();
 
     let remote_multiaddr = remote_addr.parse::<Multiaddr>().unwrap();
 
+    let (command_tx, command_rx) = mpsc::unbounded();
+    let (event_tx, event_rx) = mpsc::unbounded();
+
     spawn_local(async {
-        run(remote_multiaddr).await;
-    })
+        run(remote_multiaddr, command_rx, event_tx).await;
+    });
+
+    (command_tx, event_rx)
 }
 
-pub async fn run(remote_multiaddr: Multiaddr) {
+pub async fn run(
+    remote_multiaddr: Multiaddr,
+    mut command_rx: mpsc::UnboundedReceiver<command::Command>,
+    mut event_tx: mpsc::UnboundedSender<event::Event>,
+) {
     let local_key = identity::Keypair::generate_ed25519();
     let local_peer_id = PeerId::from(local_key.public());
     console_log!("Local peer id: {}", local_peer_id);
@@ -93,9 +115,13 @@ pub async fn run(remote_multiaddr: Multiaddr) {
     }
 
     // As a relay client,
-    let relay_address = remote_multiaddr.with(Protocol::P2pCircuit);
+    let relay_address = remote_multiaddr.clone().with(Protocol::P2pCircuit);
     swarm.listen_on(relay_address.clone()).unwrap();
     console_log!("Listening via relay: {relay_address}");
+    event_tx
+        .send(event::Event::Connected(remote_multiaddr.to_string()))
+        .await
+        .unwrap();
 
     loop {
         match swarm.next().await.unwrap() {
@@ -128,11 +154,13 @@ pub async fn run(remote_multiaddr: Multiaddr) {
                     message,
                 },
             )) => {
+                let msg = String::from_utf8(message.data).unwrap();
                 console_log!(
                     "Received message from {:?}: {}",
                     message.source,
-                    String::from_utf8(message.data).unwrap()
+                    msg.clone()
                 );
+                event_tx.send(event::Event::Message(msg)).await.unwrap();
             }
             SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(
                 libp2p::gossipsub::Event::Subscribed { peer_id, topic },
@@ -178,11 +206,6 @@ pub async fn run(remote_multiaddr: Multiaddr) {
                     {
                         for addr in listen_addrs {
                             console_log!("identify::Event::Received listen addr: {addr}");
-                            swarm
-                                .behaviour_mut()
-                                .kademlia
-                                .add_address(&peer_id, addr.clone());
-
                             swarm
                                 .behaviour_mut()
                                 .kademlia
