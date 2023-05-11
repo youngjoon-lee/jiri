@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+  jobs:
+    build-jiri-rs:
+      runs-on: ubuntu-latest
+      defaults:
+        run:
+          working-directory: ./jiri-rs
+      steps:
+        - uses: actions/checkout@v3
+        - name: Build
+          run: cargo build -v
+        - name: Run tests
+          run: cargo test -v
+    
+    build-jiri-wasm:
+      runs-on: ubuntu-latest
+      defaults:
+        run:
+          working-directory: ./jiri-wasm
+      steps:
+      - uses: actions/checkout@v3
+      - name: Build with wasm-pack
+        run: wasm-pack build
+      - name: Build www
+        working-directory: ./jiri-wasm/www
+        run: npm i && npm run build
+      - name: Build egui
+        working-directory: ./jiri-wasm/egui
+        run: trunk build
+
+    build-jiri-web:
+      runs-on: ubuntu-latest
+      defaults:
+        run:
+          working-directory: ./jiri-web
+      steps:
+      - uses: actions/checkout@v3
+      - name: Build
+        run: yarn install && yarn build
