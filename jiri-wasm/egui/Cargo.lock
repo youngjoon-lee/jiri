@@ -1040,21 +1040,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "eframe_template"
-version = "0.1.0"
-dependencies = [
- "console_error_panic_hook",
- "eframe",
- "egui",
- "futures",
- "jiri-wasm",
- "serde",
- "tracing-wasm",
- "wasm-bindgen",
- "wasm-bindgen-futures",
-]
-
-[[package]]
 name = "egui"
 version = "0.21.0"
 source = "git+https://github.com/youngjoon-lee/egui.git?branch=upgrade-wasm-bindgen#88d24b89a00836f957c3f60a4f19af2ef94df721"
@@ -1639,6 +1624,21 @@ dependencies = [
  "futures-util",
  "getrandom 0.2.9",
  "libp2p",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+]
+
+[[package]]
+name = "jiri-wasm-egui"
+version = "0.1.0"
+dependencies = [
+ "console_error_panic_hook",
+ "eframe",
+ "egui",
+ "futures",
+ "jiri-wasm",
+ "serde",
+ "tracing-wasm",
  "wasm-bindgen",
  "wasm-bindgen-futures",
 ]

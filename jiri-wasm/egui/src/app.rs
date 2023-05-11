@@ -219,6 +219,8 @@ impl eframe::App for JiriWebApp {
                     self.send_message();
                 }
             });
+
+            ui.label("© 2023 Youngjoon Lee");
         });
 
         if false {
