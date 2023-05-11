@@ -44,7 +44,7 @@ impl Default for JiriWebApp {
             // Example stuff:
             label: "Hello World!".to_owned(),
             value: 2.7,
-            remote_multiaddr: "".to_owned(),
+            remote_multiaddr: "/ip4/43.200.34.14/tcp/9091/ws/p2p/12D3KooWGNBD6qTyFKZSFGp1qSsgbyTTA49vb6nCwM5XYcVsCdKR".to_owned(),
             connected: false,
             my_peer_id: "".to_owned(),
             command_tx: None,
@@ -86,7 +86,7 @@ impl JiriWebApp {
         self.send_command(command::Command::SendMessage(self.message.clone()));
         self.messages.push_back((
             Color32::from_rgb(14, 130, 255),
-            format!("{}: {}", truncate_peer_id(&self.my_peer_id), self.message),
+            format!("[{}] {}", truncate_peer_id(&self.my_peer_id), self.message),
         ));
     }
 }
@@ -115,7 +115,7 @@ impl eframe::App for JiriWebApp {
                         console_log!("EVENT: MESSAGE: {source_peer_id} {text}");
                         self.messages.push_back((
                             Color32::from_rgb(207, 1, 248),
-                            format!("{}: {text}", truncate_peer_id(&source_peer_id)),
+                            format!("[{}] {text}", truncate_peer_id(&source_peer_id)),
                         ));
                     }
                     event::Event::Connected(multiaddr) => {
@@ -140,9 +140,9 @@ impl eframe::App for JiriWebApp {
             ui.heading("JIRI WASM Web");
 
             ui.horizontal(|ui| {
-                ui.label("A multiaddr to connect to: ");
-                ui.text_edit_singleline(&mut self.remote_multiaddr);
                 if !self.connected {
+                    ui.label("A multiaddr to connect to: ");
+                    ui.text_edit_singleline(&mut self.remote_multiaddr);
                     if ui.button("Connect").clicked() {
                         let (peer_id, command_tx, event_rx) =
                             jiri_wasm::start_interactive(self.remote_multiaddr.clone());
@@ -151,7 +151,7 @@ impl eframe::App for JiriWebApp {
                         self.event_rx = Some(event_rx);
                     }
                 } else {
-                    ui.label("Connected");
+                    ui.label(format!("Connected to {}", self.remote_multiaddr));
                 }
             });
 
@@ -186,6 +186,25 @@ impl eframe::App for JiriWebApp {
         //     });
         // });
 
+        egui::TopBottomPanel::bottom("bottom_panel").show(ctx, |ui| {
+            ui.horizontal(|ui| {
+                if self.connected {
+                    let resp = ui.text_edit_singleline(&mut self.message);
+                    if resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                        self.send_message();
+                    }
+
+                    if ui.button("Send").clicked() {
+                        self.send_message();
+                    }
+                } else {
+                    ui.label("Connect to a remote peer to start sending messages.");
+                }
+            });
+
+            ui.label("© 2023 Youngjoon Lee");
+        });
+
         egui::CentralPanel::default().show(ctx, |ui| {
             // The central panel the region left after adding TopPanel's and SidePanel's
 
@@ -206,21 +225,6 @@ impl eframe::App for JiriWebApp {
                     }
                     ui.allocate_space(ui.available_size());
                 });
-        });
-
-        egui::TopBottomPanel::bottom("bottom_panel").show(ctx, |ui| {
-            ui.horizontal(|ui| {
-                let resp = ui.text_edit_singleline(&mut self.message);
-                if resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                    self.send_message();
-                }
-
-                if ui.button("Send").clicked() {
-                    self.send_message();
-                }
-            });
-
-            ui.label("© 2023 Youngjoon Lee");
         });
 
         if false {
